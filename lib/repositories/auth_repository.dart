@@ -48,10 +48,20 @@ class AuthRepository {
 
   Future<void> logOut() => _session.signOut();
 
-  /// The token is saved before the user is returned, so by the time a screen
-  /// reacts to a successful login the next request already carries it.
+  /// The session is saved before the user is returned, so by the time a screen
+  /// reacts to a successful login the next request already carries the token.
+  ///
+  /// The user is parsed FIRST and handed to the session: the id arrives in the
+  /// same response as the token and there is no reason to ever ask the server
+  /// again who we just logged in as.
   Future<User> _startSession(Map<String, dynamic> response) async {
-    await _session.signIn(response['accessToken'] as String);
-    return User.fromJson(response['user'] as Map<String, dynamic>);
+    final user = User.fromJson(response['user'] as Map<String, dynamic>);
+
+    await _session.signIn(
+      token: response['accessToken'] as String,
+      userId: user.id,
+    );
+
+    return user;
   }
 }

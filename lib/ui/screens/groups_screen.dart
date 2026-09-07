@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../app/dependencies.dart';
 import '../../models/group.dart';
+import '../../models/invitation.dart';
 import '../../models/money.dart';
 import '../load_state.dart';
 import '../widgets/failure_view.dart';
@@ -17,20 +18,67 @@ class GroupsScreen extends StatefulWidget {
 
 class _GroupsScreenState extends State<GroupsScreen> {
   late final Loader<List<ExpenseGroup>> _groups;
+  late final Loader<List<Invitation>> _invitations;
 
   @override
   void initState() {
     super.initState();
     // Built in initState, not in build: a Loader created during build would
     // be thrown away and refetched on every rebuild.
-    _groups = Loader(() => Dependencies.of(context).groups.myGroups());
-    _groups.load();
+    final groups = Dependencies.of(context).groups;
+
+    _groups = Loader(groups.myGroups);
+    _invitations = Loader(groups.myInvitations);
+
+    _refresh();
   }
 
   @override
   void dispose() {
     _groups.dispose();
+    _invitations.dispose();
     super.dispose();
+  }
+
+  /// The two go together: answering an invitation moves both lists, and this
+  /// is also the only screen where a new invitation can turn up.
+  Future<void> _refresh() => Future.wait([_groups.load(), _invitations.load()]);
+
+  /// Says yes or no, and reloads whatever moved.
+  ///
+  /// Accepting is the interesting one: it does not just remove a card, it
+  /// makes a group appear. Reloading both lists in one go is what keeps the
+  /// screen from showing the invitation gone and the group not there yet.
+  Future<void> _answer(Invitation invitation, {required bool accept}) async {
+    final groups = Dependencies.of(context).groups;
+    final messenger = ScaffoldMessenger.of(context);
+
+    try {
+      if (accept) {
+        final group = await groups.acceptInvitation(invitation.id);
+        await _refresh();
+        if (!mounted) return;
+        messenger.showSnackBar(
+          SnackBar(content: Text('Te uniste a ${group.name}')),
+        );
+      } else {
+        await groups.rejectInvitation(invitation.id);
+        await _invitations.load();
+        if (!mounted) return;
+        messenger.showSnackBar(
+          const SnackBar(content: Text('Invitación rechazada')),
+        );
+      }
+    } on Object catch (error) {
+      // The invitation may have been answered somewhere else, so the list is
+      // reloaded either way: leaving a card that no longer exists on screen
+      // would only let somebody tap it again.
+      await _invitations.load();
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text(describeFailure(error))),
+      );
+    }
   }
 
   Future<void> _createGroup() async {
@@ -41,6 +89,20 @@ class _GroupsScreenState extends State<GroupsScreen> {
     );
 
     if (created != null) await _groups.load();
+  }
+
+  /// Opens a group and reloads the list if it comes back changed.
+  ///
+  /// The screen answers true when somebody left the group. Without this the
+  /// list would keep drawing a group the user is no longer in until the next
+  /// pull to refresh — and tapping it would answer 404, which is correct and
+  /// still looks like a bug.
+  Future<void> _openGroup(ExpenseGroup group) async {
+    final left = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(builder: (_) => GroupScreen(group: group)),
+    );
+
+    if (left ?? false) await _groups.load();
   }
 
   @override
@@ -61,9 +123,34 @@ class _GroupsScreenState extends State<GroupsScreen> {
         icon: const Icon(Icons.add),
         label: const Text('Nuevo grupo'),
       ),
-      body: LoadStateView<List<ExpenseGroup>>(
-        loader: _groups,
-        builder: (context, groups) {
+      // The invitations sit ABOVE the list and outside its LoadStateView on
+      // purpose: they are the one thing on this screen that is waiting for an
+      // answer, and burying them under a groups list that may itself be
+      // loading or broken would hide the only actionable thing here.
+      body: ListenableBuilder(
+        listenable: _invitations,
+        builder: (context, child) {
+          final invitations =
+              _invitations.state.valueOrNull ?? const <Invitation>[];
+
+          if (invitations.isEmpty) return child!;
+
+          return Column(
+            children: [
+              for (final invitation in invitations)
+                _InvitationCard(
+                  invitation: invitation,
+                  onAccept: () => _answer(invitation, accept: true),
+                  onReject: () => _answer(invitation, accept: false),
+                ),
+              const Divider(height: 1),
+              Expanded(child: child!),
+            ],
+          );
+        },
+        child: LoadStateView<List<ExpenseGroup>>(
+          loader: _groups,
+          builder: (context, groups) {
           if (groups.isEmpty) {
             return const EmptyView(
               icon: Icons.groups_outlined,
@@ -73,32 +160,101 @@ class _GroupsScreenState extends State<GroupsScreen> {
             );
           }
 
-          return RefreshIndicator(
-            onRefresh: _groups.load,
-            child: ListView.separated(
-              padding: const EdgeInsets.only(bottom: 96),
-              itemCount: groups.length,
-              separatorBuilder: (_, _) => const Divider(height: 1),
-              itemBuilder: (context, index) {
-                final group = groups[index];
+            return RefreshIndicator(
+              // Pulling refreshes the invitations too. They are the other
+              // half of this screen and they arrive without being asked for.
+              onRefresh: _refresh,
+              child: ListView.separated(
+                padding: const EdgeInsets.only(bottom: 96),
+                itemCount: groups.length,
+                separatorBuilder: (_, _) => const Divider(height: 1),
+                itemBuilder: (context, index) {
+                  final group = groups[index];
 
-                return ListTile(
-                  leading: CircleAvatar(
-                    child: Text(group.currencyCode.substring(0, 1)),
-                  ),
-                  title: Text(group.name),
-                  subtitle: Text(_subtitleFor(group)),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () => Navigator.of(context).push(
-                    MaterialPageRoute<void>(
-                      builder: (_) => GroupScreen(group: group),
+                  return ListTile(
+                    leading: CircleAvatar(
+                      child: Text(group.currencyCode.substring(0, 1)),
                     ),
-                  ),
-                );
-              },
-            ),
-          );
-        },
+                    title: Text(group.name),
+                    subtitle: Text(_subtitleFor(group)),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => _openGroup(group),
+                  );
+                },
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+/// One invitation, with both answers on it.
+///
+/// "Aceptar" and "Rechazar" are equally reachable on purpose. A card where
+/// saying no means finding a menu is a card that pressures people into saying
+/// yes, and joining a group is exactly the decision this feature exists to
+/// hand back to them.
+class _InvitationCard extends StatelessWidget {
+  const _InvitationCard({
+    required this.invitation,
+    required this.onAccept,
+    required this.onReject,
+  });
+
+  final Invitation invitation;
+  final VoidCallback onAccept;
+  final VoidCallback onReject;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final people = invitation.memberCount == 1
+        ? '1 integrante'
+        : '${invitation.memberCount} integrantes';
+
+    return Container(
+      color: theme.colorScheme.secondaryContainer,
+      padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.mail_outline, color: theme.colorScheme.onSecondaryContainer),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      invitation.groupName,
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        color: theme.colorScheme.onSecondaryContainer,
+                      ),
+                    ),
+                    Text(
+                      '${invitation.invitedByName} te invitó · $people',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSecondaryContainer,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              TextButton(onPressed: onReject, child: const Text('Rechazar')),
+              const SizedBox(width: 8),
+              FilledButton(onPressed: onAccept, child: const Text('Aceptar')),
+            ],
+          ),
+        ],
       ),
     );
   }

@@ -36,6 +36,13 @@ const _byCode = <String, String>{
   'payment_not_found': 'Ese pago ya no existe.',
   'payment_to_self': 'Un pago va de una persona a otra distinta.',
   'not_a_member': 'Esa persona no está en el grupo.',
+  'already_a_member': 'Esa persona ya está en el grupo.',
+  'invitation_not_found': 'Esa invitación ya no existe.',
+  'invitation_already_answered': 'Esa invitación ya fue respondida.',
+  // The group screen catches this one before it gets here and explains it
+  // properly, with a way out. This is the wording for anywhere else it could
+  // surface, so that no path ends up showing the server's English.
+  'balance_not_settled': 'Todavía tenés cuentas pendientes en este grupo.',
   'invalid_split': 'Las cuentas no cierran: la división no suma el total.',
   'invalid_body': 'Faltan datos o están mal escritos.',
   'route_not_found': 'Esa dirección no existe en el servidor.',

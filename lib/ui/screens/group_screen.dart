@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 
+import '../../api/api_exception.dart';
 import '../../app/dependencies.dart';
 import '../../models/expense.dart';
 import '../../models/group.dart';
+import '../../models/invitation.dart';
 import '../../models/ledger.dart';
+import '../../models/user.dart';
 import '../../repositories/groups_repository.dart';
 import '../group_controller.dart';
 import '../widgets/failure_view.dart';
@@ -109,32 +112,265 @@ class _GroupScreenState extends State<GroupScreen> {
     }
   }
 
-  Future<void> _addMember() async {
+  /// Invites somebody. Nobody is added by this: what it sends is a question.
+  ///
+  /// So the confirmation says "se le envió la invitación" and not "se sumó al
+  /// grupo" — the second would be a lie until the other person answers, and
+  /// the member list deliberately will not have changed.
+  Future<void> _invitePerson() async {
     // Captured BEFORE the await: after it, this State may no longer be in the
     // tree and its context would be dead.
     final groups = Dependencies.of(context).groups;
 
     final email = await showDialog<String>(
       context: context,
-      builder: (_) => const _AddMemberDialog(),
+      builder: (_) => const _InviteDialog(),
     );
 
     if (email == null) return;
 
     try {
-      await groups.addMember(groupId: widget.group.id, email: email);
-      await _controller.refreshMembers();
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Se sumó al grupo')),
-        );
-      }
+      final invitee = await groups.invite(
+        groupId: widget.group.id,
+        email: email,
+      );
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Se le envió la invitación a ${invitee.displayName}'),
+        ),
+      );
     } on Object catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(describeFailure(error))),
       );
     }
+  }
+
+  /// Who is in the group, and who was asked and has not answered yet.
+  ///
+  /// This exists because inviting is now invisible: the member list does not
+  /// move, and a snackbar that disappears in four seconds is not somewhere to
+  /// check whether the invitation is still out there. Without this, "¿le
+  /// llegó?" has no answer inside the app.
+  Future<void> _showMembers() async {
+    final groups = Dependencies.of(context).groups;
+    final members = _controller.detail.state.valueOrNull?.members;
+
+    final pending = await groups
+        .pendingGuests(widget.group.id)
+        // A group that cannot report its pending guests is not a reason to
+        // refuse to show its members.
+        .catchError((_) => <PendingGuest>[]);
+
+    if (!mounted) return;
+
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Integrantes'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: ListView(
+            shrinkWrap: true,
+            children: [
+              for (final member in members ?? const <GroupMember>[])
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: PersonAvatar(
+                    userId: member.userId,
+                    initials: member.initials,
+                  ),
+                  title: Text(member.displayName),
+                  subtitle: Text(member.email),
+                ),
+              if (pending.isNotEmpty) ...[
+                const Divider(),
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Text(
+                    'Invitaciones sin responder',
+                    style: Theme.of(context).textTheme.labelLarge,
+                  ),
+                ),
+                for (final guest in pending)
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const CircleAvatar(
+                      child: Icon(Icons.hourglass_empty, size: 18),
+                    ),
+                    title: Text(guest.displayName),
+                    subtitle: Text(guest.email),
+                    trailing: const Text('Pendiente'),
+                  ),
+              ],
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cerrar'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Leaves the group, after asking, and goes back to the list.
+  ///
+  /// The happy path is the boring one. What this method really exists for is
+  /// the refusal: the server does not let anybody leave with an open balance,
+  /// and that answer needs to be explained, not reported. A red snackbar
+  /// saying "algo salió mal" would be a lie — nothing went wrong, the person
+  /// simply owes money.
+  ///
+  /// Which is why it branches on `code` and not on the message. The server's
+  /// text is English and counts in cents; the wording a person reads belongs
+  /// on this side, exactly like describeFailure() argues.
+  Future<void> _leaveGroup(TabController tabs) async {
+    // All captured BEFORE the first await: this State may be gone by the time
+    // the dialog closes, and a dead context cannot look anything up.
+    final groups = Dependencies.of(context).groups;
+    final navigator = Navigator.of(context);
+    final messenger = ScaffoldMessenger.of(context);
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('¿Salir del grupo?'),
+        content: Text(
+          'Vas a dejar de ver "${widget.group.name}" y sus gastos. Lo que ya '
+          'pagaste y lo que ya te cobraron sigue en el historial del grupo: '
+          'salir no borra nada.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(context).colorScheme.error,
+              foregroundColor: Theme.of(context).colorScheme.onError,
+            ),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Salir'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      await groups.leave(widget.group.id);
+      // true so the list behind knows it is stale: the group is not ours any
+      // more and has to stop being drawn.
+      navigator.pop(true);
+    } on ApiException catch (error) {
+      if (!mounted) return;
+
+      if (error.code == 'balance_not_settled') {
+        await _explainOpenBalance(tabs);
+        return;
+      }
+
+      messenger.showSnackBar(
+        SnackBar(content: Text(describeFailure(error))),
+      );
+    } on Object catch (error) {
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text(describeFailure(error))),
+      );
+    }
+  }
+
+  /// The signed-in user's own balance in this group, if it is loaded.
+  ///
+  /// Null covers two different things on purpose — nobody signed in, and a
+  /// ledger that has not come back — because the caller reacts to both the
+  /// same way: say the rule without naming a figure. An amount that might be
+  /// wrong is worth less here than no amount at all.
+  Balance? _myBalance() {
+    final me = Dependencies.of(context).session.userId;
+    if (me == null) return null;
+
+    final balances = _controller.balances.state.valueOrNull;
+    if (balances == null) return null;
+
+    for (final balance in balances) {
+      if (balance.userId == me) return balance;
+    }
+    return null;
+  }
+
+  /// The 409, told as what it is: a rule, with the number and the way out.
+  ///
+  /// The balances are reloaded before anything is drawn. The server refused
+  /// based on what the ledger says at this instant, and explaining that
+  /// refusal with a figure this screen happened to be holding from a minute
+  /// ago would be worse than showing no figure — it would be an explanation
+  /// that does not match its own reason.
+  ///
+  /// Sending somebody to the Liquidar tab is the other half. An explanation
+  /// that ends in a dead end is only half an answer, and that tab already
+  /// knows exactly who has to pay whom.
+  Future<void> _explainOpenBalance(TabController tabs) async {
+    await _controller.refreshLedger();
+    if (!mounted) return;
+
+    final mine = _myBalance();
+
+    final settleUp = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        icon: const Icon(Icons.account_balance_wallet_outlined),
+        title: Text(_openBalanceTitle(mine)),
+        content: Text(_openBalanceBody(mine)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Entendido'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Ver cómo saldar'),
+          ),
+        ],
+      ),
+    );
+
+    if (settleUp ?? false) tabs.animateTo(2);
+  }
+
+  String _openBalanceTitle(Balance? mine) {
+    if (mine == null || mine.isSettled) return 'Todavía hay cuentas pendientes';
+
+    final amount = mine.amount.absolute.format(currencyCode: _currency);
+
+    // The direction changes what the person has to DO, so it changes the
+    // sentence. "Tenés un saldo abierto" would make somebody who is owed
+    // money go looking for their wallet.
+    return mine.owes ? 'Todavía debés $amount' : 'Todavía te deben $amount';
+  }
+
+  String _openBalanceBody(Balance? mine) {
+    const rule =
+        'No se puede salir de un grupo con saldo abierto. La deuda no se iría '
+        'con vos: quedaría en el grupo sin nadie a quien cobrarle o a quien '
+        'pagarle.';
+
+    if (mine == null || mine.isSettled) {
+      return '$rule\n\nSaldá lo que falte y volvé a intentarlo.';
+    }
+
+    return mine.owes
+        ? '$rule\n\nPagá lo que debés y volvé a intentarlo.'
+        : '$rule\n\nCobrá lo que te deben y volvé a intentarlo.';
   }
 
   Future<void> _recordPayment({Transfer? suggestion}) async {
@@ -164,9 +400,46 @@ class _GroupScreenState extends State<GroupScreen> {
           title: Text(widget.group.name),
           actions: [
             IconButton(
-              tooltip: 'Agregar a alguien',
+              tooltip: 'Invitar a alguien',
               icon: const Icon(Icons.person_add_alt),
-              onPressed: _addMember,
+              onPressed: _invitePerson,
+            ),
+            // A Builder so this sits BELOW the DefaultTabController and can
+            // read it. That is what lets the "cuentas pendientes" dialog send
+            // somebody straight to the Liquidar tab instead of leaving them to
+            // find it. Leaving is also destructive and irreversible-ish, so it
+            // lives behind a menu: an icon next to "Agregar a alguien" is one
+            // mis-tap away from a goodbye nobody meant.
+            Builder(
+              builder: (context) {
+                final tabs = DefaultTabController.of(context);
+                final colors = Theme.of(context).colorScheme;
+
+                return PopupMenuButton<void>(
+                  tooltip: 'Más opciones',
+                  itemBuilder: (context) => [
+                    PopupMenuItem<void>(
+                      onTap: _showMembers,
+                      child: const ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: Icon(Icons.group_outlined),
+                        title: Text('Ver integrantes'),
+                      ),
+                    ),
+                    PopupMenuItem<void>(
+                      onTap: () => _leaveGroup(tabs),
+                      child: ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: Icon(Icons.logout, color: colors.error),
+                        title: Text(
+                          'Salir del grupo',
+                          style: TextStyle(color: colors.error),
+                        ),
+                      ),
+                    ),
+                  ],
+                );
+              },
             ),
           ],
           bottom: const TabBar(
@@ -479,14 +752,14 @@ class _SettleTab extends StatelessWidget {
   }
 }
 
-class _AddMemberDialog extends StatefulWidget {
-  const _AddMemberDialog();
+class _InviteDialog extends StatefulWidget {
+  const _InviteDialog();
 
   @override
-  State<_AddMemberDialog> createState() => _AddMemberDialogState();
+  State<_InviteDialog> createState() => _InviteDialogState();
 }
 
-class _AddMemberDialogState extends State<_AddMemberDialog> {
+class _InviteDialogState extends State<_InviteDialog> {
   final _email = TextEditingController();
 
   @override
@@ -498,12 +771,15 @@ class _AddMemberDialogState extends State<_AddMemberDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('Agregar a alguien'),
+      title: const Text('Invitar a alguien'),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const Text('Tiene que tener cuenta creada.'),
+          const Text(
+            'Le va a llegar una invitación que puede aceptar o rechazar. '
+            'Tiene que tener cuenta creada.',
+          ),
           const SizedBox(height: 16),
           TextField(
             controller: _email,
@@ -522,7 +798,7 @@ class _AddMemberDialogState extends State<_AddMemberDialog> {
         ),
         FilledButton(
           onPressed: () => Navigator.of(context).pop(_email.text.trim()),
-          child: const Text('Agregar'),
+          child: const Text('Invitar'),
         ),
       ],
     );
