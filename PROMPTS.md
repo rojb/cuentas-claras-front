@@ -272,6 +272,40 @@ alguien sin nada que ver con el pago no lo puede tocar.
 
 ---
 
+## 18. El tipo de cambio, ahora sí de un lado
+
+Cambió la respuesta del prompt 43 y del apéndice: hasta acá el tipo de cambio
+lo escribía la persona porque no había price feed. Ahora hay uno —Binance— y
+la app completa el campo sola. Lo que **no** cambió es que la tasa se sigue
+congelando en el gasto (prompt 41): Binance saca el tipeo, no el congelado.
+
+**48.** — Escrito con un typo ("se estpa"). Pidió analizar primero cómo se
+manejaba antes de tocar nada.
+> analiza como se estpa manejando el tipo de cambio ya que quiero que se integre con la api de binance para no tener que ponerlo manualmente
+
+**49.** — Las respuestas a tres preguntas: (1) mediana de los primeros 15
+avisos del lado vendedor del P2P —Binance no tiene mercado spot para el
+boliviano, así que la fuente es el "dólar Binance" del order book entre
+personas—; (2) si Binance no responde, el campo queda **vacío y recién ahí
+editable**, no se pre-llena con nada; (3) backend y frontend, los dos.
+> 1. si
+> 2. si, campo vacio y recien permitir editarlo
+> 3. ambos
+
+**50.**
+> pruebalo
+
+---
+
+## 19. Documentación, la cuarta
+
+**51.** — El mismo pedido que el 37, el 42 y el 47, esta vez con la
+integración de Binance hecha. La segunda mitad ("prueba que los cambios están
+funcionando") es la que llenó el apéndice de verificación de esta tanda.
+> quiero que los prompts y su respuesta los vayas agregando al md PROMPTS tal cual se encuentra en el contenido que ya tiene. ademas quiero que pruebes que los cambios estáfuncionando correctamente
+
+---
+
 ## Apéndice — decisiones que salieron de estos pedidos
 
 Cosas que no estaban en ningún prompt pero que se decidieron construyendo, y
@@ -289,11 +323,11 @@ que conviene poder defender:
 | El cálculo en vivo es un preview | `allocate` en Dart es un porte línea por línea del dominio del server, verificado contra él en 240 casos. Si alguna vez difieren, **manda el server**. |
 | Una membresía no se borra, se marca con `left_at` | El ledger apunta a ella. Borrarla dejaría deudas sin dueño, así que salir de un grupo es un hecho con fecha, igual que todo lo demás acá. |
 | Las invitaciones viven en su propia tabla | Una fila en `group_members` no significa "esta persona está asociada al grupo", significa **a esta persona se le puede cobrar plata**. Una invitación pendiente ahí dejaría que la base acepte un gasto a nombre de alguien que todavía no dijo que sí. |
-| El tipo de cambio se congela en el gasto | Decidido en el prompt 41. Un gasto es un hecho, y el cambio de esa noche es parte del hecho. Convertir al leer haría que los saldos se muevan solos de un día para el otro, que un pago completo deje de serlo a la mañana siguiente, y que un saldo de la semana pasada no se pueda reproducir. |
+| El tipo de cambio se congela en el gasto | Decidido en el prompt 41. Un gasto es un hecho, y el cambio de esa noche es parte del hecho. Convertir al leer haría que los saldos se muevan solos de un día para el otro, que un pago completo deje de serlo a la mañana siguiente, y que un saldo de la semana pasada no se pueda reproducir. Que el número lo traiga Binance (prompts 48-50) no cambia nada de esto: se completa solo, pero viaja en el alta del gasto y queda guardado en la fila igual que uno tipeado. |
 | Convertir el TOTAL una vez, y recién después dividir | Las partes en la moneda original se usan como **pesos** para repartir el total ya convertido. Convertir cada parte por separado redondea cada una por separado y dejan de sumar el total: `round(a×r) + round(b×r)` no es `round((a+b)×r)`. Es la misma pista del prompt 35, un nivel más arriba. |
 | Un gasto en USDT solo se acepta a la par | Se valida en el dominio, en un CHECK de la base, y el campo directamente no aparece en la pantalla. "1 USDT = 1,02 USDT" no es un tipo de cambio, es un error de tipeo. |
 | Menos de un centavo de USDT se rechaza | Bs 0,01 a 6,96 convierte a 0. Redondear para arriba inventa plata y para abajo cobra por nada, así que devuelve 422 `amount_too_small`. |
-| El tipo de cambio lo escribe la persona | No hay price feed. Lo único que se ofrece es el último cambio que ese grupo usó de verdad, leído de sus propios gastos; sin historial, el campo va vacío. En Bolivia el USDT no cotiza cerca del oficial, así que el único número que sirve es el que esas personas realmente pagaron. |
+| El tipo de cambio lo trae Binance | Prompts 48-50. El backend consulta el order book P2P de Binance (`GET /rates/:moneda`), toma la mediana de los primeros 15 avisos del lado vendedor y la cachea 5 minutos. La app completa el campo con ese número y lo deja de solo lectura; USDT ni se consulta —es la par y punto—. Si Binance no responde y no hay nada en cache, el endpoint contesta `503` y el campo vuelve a ser un input vacío y editable, como estaba antes. Editar un gasto viejo nunca vuelve a consultar: muestra la tasa con la que se guardó. El endpoint P2P no es API documentada de Binance —es la que usa su web— así que puede cambiar de forma; por eso el cache, el valor viejo como red de contención, y al final el campo a mano. |
 | Un pago lo registran las dos puntas, o el anfitrión | Prompts 44 a 46. Registrar un pago mueve el saldo de otro, así que no es una nota que cualquiera del grupo deje sobre dos terceros. "Anfitrión" no es un rol nuevo: es `expense_groups.created_by`, que ya existía. |
 | Eliminar suma a quien lo registró | El motivo más común para borrar un pago es que quien lo tipeó se equivocó. Si tiene que ir a buscar al anfitrión por un typo, la corrección no se hace. |
 | 403 acá, y no 404 como en `requireMembership` | El 404 existe para no confirmar que un grupo existe. Acá la persona ya es miembro y ya ve el grupo: no queda nada que esconder, lo único que se niega es la escritura. |
@@ -326,7 +360,28 @@ Sin tests, la verificación fue toda contra el sistema corriendo:
   errores de consola, `localStorage` sobrevive al refresh, y se sacaron
   capturas del cálculo en vivo (Bs 100 entre 3, el recálculo al cambiar el
   total, y un centavo entre tres).
+- **Tipo de cambio de Binance** (prompt 50): el proveedor P2P se probó en vivo
+  —BOB ≈ 12,51 Bs/USDT, USD ≈ 1,05—. Contra el server con Postgres, 14
+  comprobaciones en verde: `/rates/BOB` y `/rates/USD` contestan `binance-p2p`,
+  `/rates/USDT` la par sin tocar la red, `/rates/ARS` `400`, sin token `401`,
+  la segunda llamada sale de cache en 3 ms, y con Binance inalcanzable y nada
+  cacheado, `503 rate_unavailable`. Integración completa: la tasa de
+  `/rates/BOB` se mandó en un `POST /expenses` y quedó guardada tal cual
+  (`rate_micros` idéntico), con **Bs 696 → 55,64 USDT** cuadrando exacto con
+  `round((69600·10⁶)/tasa)` y el saldo del pagador en 0. El guard viejo sigue
+  en pie: un gasto en USDT con una tasa de BOB rebota `422 invalid_rate`.
+- **Frontend del tipo de cambio**: `flutter analyze` limpio y un harness
+  descartable —MockClient, borrado después de correr, como los 240 casos de
+  reparto— que confirma las cuatro ramas de `CurrencyRateFields`: Binance
+  responde y el campo queda de solo lectura con el valor; Binance cae y el
+  campo queda vacío y editable con el aviso "ponelo a mano"; editar un gasto
+  viejo no vuelve a consultar; en USDT no hay campo. Para que el harness
+  pudiera inyectar un Binance falso, `CurrencyRateFields` ganó un parámetro
+  `rateRepository` opcional —las pantallas lo dejan en null y usan el
+  repositorio real—, el mismo patrón que `createApp(..., rates)` en el server.
 
 **Lo que no se verificó**: nadie hizo el flujo completo apretando botones en
 un navegador real. Manejar el input de texto de Flutter web por CDP no se
-pudo — CanvasKit dibuja en canvas y el input vive en un shadow DOM.
+pudo — CanvasKit dibuja en canvas y el input vive en un shadow DOM. El
+autocompletado del tipo de cambio se probó con el harness y contra el
+endpoint, no tocando el dropdown en un navegador.
