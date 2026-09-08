@@ -395,6 +395,58 @@ línea del backend.
 
 ---
 
+## 25. Levantar todo
+
+**67.** — Postgres en Docker, el backend con watch en `:3000` y la app web en
+`:8080`. Lo que se verificó no fue que los dos contestaran sino que **se
+hablaran**: el server devolviendo `access-control-allow-origin` para el
+origen de la app, porque sin eso se ve una app perfecta en la que ninguna
+petición funciona.
+> levanta los dos proyectos
+
+---
+
+## 26. Un pago anulado no desaparece
+
+**68.** — Lo primero que apareció al mirar el código: **la base nunca borró un
+pago**. `voidPayment` siempre fue un `UPDATE` que pone `deleted_at`, igual que
+un gasto. Lo que lo hacía desaparecer era la LECTURA, porque todas las
+consultas filtraban `deleted_at IS NULL`. El ledger guardaba la verdad y la
+pantalla mostraba un historial con un agujero.
+> No debería poder eliminar items del historial de pagos
+
+**69.** — La decisión, sobre "que nadie pueda anular nunca". Esa opción tenía
+una trampa: no hay edición de pagos y la base prohíbe montos negativos
+(`payments_amount_is_positive`), así que un pago mal cargado habría dejado el
+saldo mal **para siempre**, sin salida desde la app.
+> Que quede anulado, no borrado
+
+**70.**
+> committea
+
+---
+
+## 27. La invitación aparece sola
+
+**71.** — Y esto no salía gratis del SSE que ya estaba. El stream es por
+grupo y tiene una puerta, `requireMembership`; un invitado **todavía no es
+miembro**, así que al abrirlo recibía 404. La invitación llega ANTES que la
+membresía, así que por definición no podía viajar por el canal del grupo al
+que invita. Hizo falta un segundo tipo de canal, por persona.
+> Quiero que al generarse una notificación de agregar al un grupo, aoutomaticamiente aparezca en la ui de la persona que está siendo invitada al grupo, actualmente se tiene que recargar la pantalla
+
+---
+
+## 28. Cierre
+
+**72.**
+> commitea y push a ambos
+
+**73.**
+> actualiza el PROMPTS.md con estos últimos pedidos
+
+---
+
 ## Apéndice — decisiones que salieron de estos pedidos
 
 Cosas que no estaban en ningún prompt pero que se decidieron construyendo, y
@@ -423,6 +475,10 @@ que conviene poder defender:
 | El token por query string, sólo en el stream | `EventSource` no puede mandar headers — la API del navegador no lo permite. La alternativa era un stream sin autenticar de la actividad privada de un grupo. Acotado a una ruta, es una lectura, y el token expira solo. El header sigue ganando cuando vienen los dos. |
 | El cliente SSE nativo NO es un `async*` | Un `async*` parado en `await for` sobre un socket callado deadlockea al cancelar: cancelar espera al generador, el generador espera al stream interno, y ese espera datos que no van a llegar. **Medido: `cancel()` no volvía a los 5s**, y la pantalla lo llama en cada `dispose`. Como `StreamController` que mata el socket primero, vuelve en 8ms. |
 | `_Division` es una clase, no un widget | Prompt 64. La mitad "gente" de un split la usan el gasto entero y cada ítem; escribir un segundo editor adentro de la tarjeta habría sido duplicar la lectura de porcentajes, el "¿suma 100?" y el autocompletado. Es una clase y no un widget porque el padre tiene que poder preguntar cómo quedó en cualquier momento — un hijo con estado propio serían GlobalKeys y manos en el State ajeno. Un solo enum de modos, filtrado por contexto. |
+| Un pago anulado sale de los saldos y se queda en el historial | Prompts 68-69. La base nunca lo borró: `voidPayment` siempre fue un UPDATE que pone `deleted_at`. Lo que lo hacía desaparecer era la lectura. Ahora la consulta del historial no filtra y la de saldos sí — una línea de diferencia entre las dos, con un comentario que dice cuál es cuál. |
+| `deleted_by` con un CHECK `NOT VALID` | Había 17 pagos ya anulados sin autor registrado. Rellenarlos con `created_by` sería inventar un autor que no conocemos, y un nombre falso en un registro de auditoría es peor que un hueco admitido. NOT VALID deja esas filas en paz y obliga a que toda anulación nueva nombre a alguien; la pantalla muestra "anulado" a secas para las viejas. |
+| Un canal de eventos por PERSONA, además del de grupo | Prompt 71. El stream de un grupo exige `requireMembership`, y un invitado todavía no es miembro. La invitación llega antes que la membresía, así que no puede viajar por el canal del grupo al que invita. `/events` no chequea nada: el token dice quién sos y quedás suscrito a vos y a nadie más. |
+| Un solo Map con claves prefijadas, no dos | `group:` y `person:`. Suscribirse, desuscribirse y limpiar el Set vacío son las mismas tres líneas en los dos casos, y dos copias son dos lugares donde olvidarse de la limpieza — la fuga que sólo aparece después de horas corriendo. |
 | Un pago lo registran las dos puntas, o el anfitrión | Prompts 44 a 46. Registrar un pago mueve el saldo de otro, así que no es una nota que cualquiera del grupo deje sobre dos terceros. "Anfitrión" no es un rol nuevo: es `expense_groups.created_by`, que ya existía. |
 | Eliminar suma a quien lo registró | El motivo más común para borrar un pago es que quien lo tipeó se equivocó. Si tiene que ir a buscar al anfitrión por un typo, la corrección no se hace. |
 | 403 acá, y no 404 como en `requireMembership` | El 404 existe para no confirmar que un grupo existe. Acá la persona ya es miembro y ya ve el grupo: no queda nada que esconder, lo único que se niega es la escritura. |
@@ -444,6 +500,18 @@ Sin tests, la verificación fue toda contra el sistema corriendo:
   cargados; los 41 saldos quedaron idénticos y todos los grupos siguieron
   sumando cero. Después, 218 gastos al azar en las tres monedas más 18 pagos:
   la suma cero se mantuvo y la liquidación dejó a todos en cero.
+- **Pagos anulados** (prompt 69): el pago mueve el saldo, se anula, y el
+  saldo vuelve **exacto** a donde estaba sumando cero. No desaparece del
+  historial: vuelve con `voidedAt` y `voidedBy` = quien lo anuló, distinto de
+  `createdBy` = quien lo registró, que es el caso que importa poder ver.
+  Anular dos veces da 404, y un pago nuevo convive con el anulado sin que los
+  saldos cuenten el segundo.
+- **Invitación en vivo** (prompt 71): el invitado abre su canal personal
+  **sin ser miembro de nada** (200) mientras el del grupo le sigue dando 404 —
+  esa asimetría es el punto—. Un tercero no ve la invitación ajena, el
+  reintento vuelve a avisar, y al aceptar el grupo recibe `member.joined` y
+  recién ahí el canal del grupo se le abre. En la app real, `/invitations` y
+  `/groups` salieron solas **a los 30ms** y la tarjeta apareció arriba.
 - **Permisos**: 24 comprobaciones contra el server con cuatro usuarios —
   anfitrión, dos que se deben plata, y un cuarto sin nada que ver. Cada quién
   puede y cada quién no, en registrar y en eliminar, incluido el caso del
