@@ -56,7 +56,19 @@ class Loader<T> extends ChangeNotifier {
 
   bool _disposed = false;
 
-  Future<void> load() async {
+  /// The fetch that is already running, if one is.
+  ///
+  /// Reloads now arrive from four directions at once — opening the screen,
+  /// coming back to the app, pulling down, and a server event saying the
+  /// ledger moved. Without this they would stack, and two answers landing out
+  /// of order would leave the OLDER one on screen. Callers that arrive mid
+  /// flight simply wait for the one already in the air.
+  Future<void>? _inFlight;
+
+  Future<void> load() =>
+      _inFlight ??= _run().whenComplete(() => _inFlight = null);
+
+  Future<void> _run() async {
     // A refresh keeps whatever is already on screen instead of blanking it,
     // so pulling to refresh does not make the list jump.
     if (_state is! Ready<T>) {

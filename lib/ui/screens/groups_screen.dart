@@ -19,6 +19,7 @@ class GroupsScreen extends StatefulWidget {
 class _GroupsScreenState extends State<GroupsScreen> {
   late final Loader<List<ExpenseGroup>> _groups;
   late final Loader<List<Invitation>> _invitations;
+  late final AppLifecycleListener _lifecycle;
 
   @override
   void initState() {
@@ -31,10 +32,16 @@ class _GroupsScreenState extends State<GroupsScreen> {
     _invitations = Loader(groups.myInvitations);
 
     _refresh();
+
+    // An invitation is the one thing here that arrives without being asked
+    // for, and it arrives while the app is closed as often as not. Coming
+    // back to it is the moment to look.
+    _lifecycle = AppLifecycleListener(onResume: _refresh);
   }
 
   @override
   void dispose() {
+    _lifecycle.dispose();
     _groups.dispose();
     _invitations.dispose();
     super.dispose();

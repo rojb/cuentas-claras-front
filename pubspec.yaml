@@ -41,6 +41,10 @@ dependencies:
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
   http: ^1.6.0
+
+  # Only for EventSource, and only on web. The native side uses dart:io.
+  # See lib/api/group_event_stream.dart for why there are two.
+  web: ^1.1.0
   flutter_secure_storage: ^11.0.0
   intl: ^0.20.3
 

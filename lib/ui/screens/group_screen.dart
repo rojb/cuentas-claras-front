@@ -27,6 +27,7 @@ class GroupScreen extends StatefulWidget {
 
 class _GroupScreenState extends State<GroupScreen> {
   late final GroupController _controller;
+  late final AppLifecycleListener _lifecycle;
 
   @override
   void initState() {
@@ -35,15 +36,69 @@ class _GroupScreenState extends State<GroupScreen> {
     _controller = GroupController(
       groups: dependencies.groups,
       ledger: dependencies.ledger,
+      events: dependencies.events,
       groupId: widget.group.id,
+      myUserId: dependencies.session.userId,
     );
     _controller.refresh();
+
+    _controller.incoming.addListener(_announceIncoming);
+
+    // Coming back to the app re-reads the ledger.
+    //
+    // This is the cheapest fix for the most common way the screen goes
+    // stale: the phone gets put down while four people argue about who pays,
+    // somebody loads an expense meanwhile, and the person who comes back is
+    // looking at a balance from before it. On the web this fires when the tab
+    // is focused again, which is the same situation with a different name.
+    //
+    // Only the ledger, not the members: people do not join a group while you
+    // are looking away nearly as often as money moves.
+    _lifecycle = AppLifecycleListener(
+      onResume: () => _controller.refreshLedger(),
+    );
   }
 
   @override
   void dispose() {
+    _lifecycle.dispose();
+    _controller.incoming.removeListener(_announceIncoming);
     _controller.dispose();
     super.dispose();
+  }
+
+  /// Says out loud that the screen just changed under the person's hands.
+  ///
+  /// Without this the numbers simply move: a balance you were reading is
+  /// suddenly a different number and there is no way to tell a live update
+  /// from a bug. The wording never quotes an amount, because the event does
+  /// not carry one — whatever is on screen a moment later came from the
+  /// ledger, which is the only thing that knows.
+  void _announceIncoming() {
+    final event = _controller.incoming.value;
+    if (event == null || !mounted) return;
+
+    final who = _controller.detail.state.valueOrNull?.nameOf(event.actorId) ??
+        'Alguien';
+
+    final what = switch (event.kind) {
+      'payment.recorded' => '$who registró un pago',
+      'payment.deleted' => '$who eliminó un pago',
+      'expense.created' => '$who cargó un gasto',
+      'expense.replaced' => '$who editó un gasto',
+      'expense.deleted' => '$who eliminó un gasto',
+      'member.joined' => '$who se sumó al grupo',
+      'member.left' => '$who salió del grupo',
+      _ => null,
+    };
+
+    if (what == null) return;
+
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(content: Text(what), duration: const Duration(seconds: 3)),
+      );
   }
 
   /// What the group has been spending in lately, so the expense form opens on

@@ -1,7 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
 import '../models/expense.dart';
+import '../models/group_event.dart';
 import '../models/ledger.dart';
+import '../repositories/group_events_repository.dart';
 import '../repositories/groups_repository.dart';
 import '../repositories/ledger_repository.dart';
 import 'load_state.dart';
@@ -20,16 +24,49 @@ class GroupController extends ChangeNotifier {
   GroupController({
     required GroupsRepository groups,
     required LedgerRepository ledger,
+    required GroupEventsRepository events,
     required this.groupId,
+    this.myUserId,
   }) {
     detail = Loader(() => groups.detail(groupId));
     expenses = Loader(() => ledger.expenses(groupId));
     balances = Loader(() => ledger.balances(groupId));
     settlement = Loader(() => ledger.settlement(groupId));
     payments = Loader(() => ledger.payments(groupId));
+
+    _events = events.forGroup(groupId).listen(_onEvent);
   }
 
   final String groupId;
+
+  /// Who is looking, so the server telling us about our own write can be
+  /// ignored: we already reloaded when it succeeded.
+  final String? myUserId;
+
+  StreamSubscription<GroupEvent>? _events;
+
+  /// The last thing somebody ELSE did here, for the screen to mention.
+  ///
+  /// Separate from the loaders on purpose. Reloading is what keeps the
+  /// numbers honest; this is only so the change does not happen in silence,
+  /// and a balance that moved while you were looking at it does not read as
+  /// a glitch.
+  final ValueNotifier<GroupEvent?> incoming = ValueNotifier(null);
+
+  void _onEvent(GroupEvent event) {
+    // Our own echo. The write already refreshed everything it touched.
+    if (event.isEchoOf(myUserId)) return;
+
+    incoming.value = event;
+
+    // Somebody joining or leaving moves the member list, which the ledger
+    // reload does not cover: their name has to appear in the split editor.
+    if (event.movesTheLedger) {
+      refreshLedger();
+    } else {
+      refresh();
+    }
+  }
 
   late final Loader<GroupDetail> detail;
   late final Loader<List<Expense>> expenses;
@@ -70,6 +107,10 @@ class GroupController extends ChangeNotifier {
 
   @override
   void dispose() {
+    // First: a late event arriving into disposed loaders would be a crash on
+    // a screen nobody is looking at any more.
+    _events?.cancel();
+    incoming.dispose();
     detail.dispose();
     expenses.dispose();
     balances.dispose();

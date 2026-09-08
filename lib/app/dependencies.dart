@@ -3,6 +3,7 @@ import 'package:flutter/widgets.dart';
 import '../api/api_client.dart';
 import '../api/session.dart';
 import '../repositories/auth_repository.dart';
+import '../repositories/group_events_repository.dart';
 import '../repositories/groups_repository.dart';
 import '../repositories/ledger_repository.dart';
 import '../repositories/rate_repository.dart';
@@ -20,6 +21,7 @@ class Dependencies extends InheritedWidget {
     auth = AuthRepository(api, session);
     groups = GroupsRepository(api);
     ledger = LedgerRepository(api);
+    events = GroupEventsRepository(api, session);
     rates = RateRepository(api);
   }
 
@@ -30,6 +32,7 @@ class Dependencies extends InheritedWidget {
   late final AuthRepository auth;
   late final GroupsRepository groups;
   late final LedgerRepository ledger;
+  late final GroupEventsRepository events;
   late final RateRepository rates;
 
   /// Looks the dependencies up WITHOUT subscribing to them.
