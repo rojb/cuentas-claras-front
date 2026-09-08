@@ -26,7 +26,6 @@ class RecordPaymentSheet extends StatefulWidget {
     required this.groupId,
     required this.members,
     this.suggestion,
-    this.recentRates = const {},
     this.me,
     this.isHost = false,
   });
@@ -37,10 +36,6 @@ class RecordPaymentSheet extends StatefulWidget {
   /// The transfer the settlement proposed, in USDT. Null when somebody is
   /// recording a payment nobody suggested.
   final Transfer? suggestion;
-
-  /// The last rate this group used for each currency, offered as a starting
-  /// point. Nothing is invented: no history means an empty field.
-  final Map<String, Rate> recentRates;
 
   /// Who is signed in.
   final String? me;
@@ -264,7 +259,8 @@ class _RecordPaymentSheetState extends State<RecordPaymentSheet> {
                 onCurrencyChanged: (value) => setState(() {
                   _currency = value;
                   // The rate in the field belonged to the old currency.
-                  _rate.text = widget.recentRates[value]?.asPlainText ?? '';
+                  // CurrencyRateFields fetches the new one from Binance.
+                  _rate.text = '';
                   _reprice();
                 }),
                 onRateChanged: () => setState(_reprice),

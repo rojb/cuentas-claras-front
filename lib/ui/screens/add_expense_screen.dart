@@ -31,7 +31,6 @@ class AddExpenseScreen extends StatefulWidget {
     required this.members,
     this.editing,
     this.recentCurrency,
-    this.recentRates = const {},
   });
 
   final String groupId;
@@ -41,17 +40,9 @@ class AddExpenseScreen extends StatefulWidget {
   final Expense? editing;
 
   /// What the group has been spending in lately, so the common case is one
-  /// tap shorter.
+  /// tap shorter. The rate is not carried across: [CurrencyRateFields] fetches
+  /// a live one from Binance instead of reusing whatever was last typed.
   final String? recentCurrency;
-
-  /// The last rate this group actually used for each currency.
-  ///
-  /// Offered as a starting point, never as the answer. Nothing is invented
-  /// here: an empty map means an empty field, because a made-up rate is worse
-  /// than no rate. In Bolivia especially, USDT does not trade anywhere near
-  /// the official number, and the only rate worth recording is the one these
-  /// people actually agreed to.
-  final Map<String, Rate> recentRates;
 
   @override
   State<AddExpenseScreen> createState() => _AddExpenseScreenState();
@@ -88,9 +79,10 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
         widget.recentCurrency ??
         (currencies.containsKey('BOB') ? 'BOB' : settlementCurrency);
 
-    _rate = TextEditingController(
-      text: editing?.rate.asPlainText ?? _suggestedRateFor(_currency),
-    );
+    // New expense: left empty, CurrencyRateFields fills it from Binance.
+    // Editing: the rate this expense was frozen at, shown as-is and not
+    // re-fetched — the numbers on an old expense must not move on their own.
+    _rate = TextEditingController(text: editing?.rate.asPlainText ?? '');
 
     // An expense whose payer is somehow no longer in the group would leave the
     // dropdown with a value it cannot show, which throws on build.
@@ -108,9 +100,6 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
     super.dispose();
   }
 
-  String _suggestedRateFor(String currencyCode) =>
-      widget.recentRates[currencyCode]?.asPlainText ?? '';
-
   Money? get _parsedTotal => Money.tryParse(_total.text);
 
   Rate? get _parsedRate =>
@@ -121,9 +110,9 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
 
     setState(() {
       _currency = value;
-      // Whatever rate was in the field belonged to the old currency. Keeping
-      // it would silently price bolivianos at the dollar's rate.
-      _rate.text = _suggestedRateFor(value);
+      // Whatever rate was in the field belonged to the old currency. Clear
+      // it; CurrencyRateFields fetches the new one from Binance.
+      _rate.text = '';
     });
   }
 
@@ -228,6 +217,8 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
               amount: _parsedTotal,
               onCurrencyChanged: _changeCurrency,
               onRateChanged: () => setState(() {}),
+              // Editing shows the frozen rate; a new expense looks it up.
+              autoFetch: !_isEditing,
             ),
             const SizedBox(height: 16),
             DropdownButtonFormField<String>(

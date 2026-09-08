@@ -46,22 +46,16 @@ class _GroupScreenState extends State<GroupScreen> {
     super.dispose();
   }
 
-  /// What the group has been spending in lately, and at what rate, so the
-  /// expense form opens on the common case instead of a blank one. Read off
-  /// the ledger rather than remembered anywhere: whatever these people
-  /// actually used last is the best guess available, and nothing is invented
-  /// when there is no history.
-  ({String? currency, Map<String, Rate> rates}) get _recent {
+  /// What the group has been spending in lately, so the expense form opens on
+  /// the common case instead of a blank one. Read off the ledger rather than
+  /// remembered anywhere: whatever these people actually used last is the
+  /// best guess available.
+  ///
+  /// The rate is NOT carried across any more — the form fetches a live one
+  /// from Binance instead of reusing whatever was last typed.
+  String? get _recentCurrency {
     final expenses = _controller.expenses.state.valueOrNull ?? const <Expense>[];
-    final rates = <String, Rate>{};
-
-    // Newest first, and putIfAbsent, so the FIRST rate seen for a currency is
-    // the most recent one used.
-    for (final expense in expenses) {
-      rates.putIfAbsent(expense.currencyCode, () => expense.rate);
-    }
-
-    return (currency: expenses.isEmpty ? null : expenses.first.currencyCode, rates: rates);
+    return expenses.isEmpty ? null : expenses.first.currencyCode;
   }
 
   /// The signed-in user, and whether they created this group.
@@ -83,8 +77,7 @@ class _GroupScreenState extends State<GroupScreen> {
           groupId: widget.group.id,
           members: members,
           editing: existing,
-          recentCurrency: _recent.currency,
-          recentRates: _recent.rates,
+          recentCurrency: _recentCurrency,
         ),
       ),
     );
@@ -458,7 +451,6 @@ class _GroupScreenState extends State<GroupScreen> {
         groupId: widget.group.id,
         members: detail.members,
         suggestion: suggestion,
-        recentRates: _recent.rates,
         me: _me,
         // The host can write down a payment between any two people. Everybody
         // else has to be one of the two, and the form says so rather than

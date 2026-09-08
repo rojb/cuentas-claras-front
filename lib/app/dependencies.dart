@@ -5,6 +5,7 @@ import '../api/session.dart';
 import '../repositories/auth_repository.dart';
 import '../repositories/groups_repository.dart';
 import '../repositories/ledger_repository.dart';
+import '../repositories/rate_repository.dart';
 
 /// Everything the app needs, built once and handed down the tree.
 ///
@@ -19,6 +20,7 @@ class Dependencies extends InheritedWidget {
     auth = AuthRepository(api, session);
     groups = GroupsRepository(api);
     ledger = LedgerRepository(api);
+    rates = RateRepository(api);
   }
 
   final String? baseUrl;
@@ -28,6 +30,7 @@ class Dependencies extends InheritedWidget {
   late final AuthRepository auth;
   late final GroupsRepository groups;
   late final LedgerRepository ledger;
+  late final RateRepository rates;
 
   /// Looks the dependencies up WITHOUT subscribing to them.
   ///
