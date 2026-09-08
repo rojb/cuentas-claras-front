@@ -272,18 +272,37 @@ alguien sin nada que ver con el pago no lo puede tocar.
 
 ---
 
-## 18. El tipo de cambio, ahora sí de un lado
+## 18. Git, y una historia reescrita
+
+**48.**
+> commit y push a ambos repositorios
+
+**49.** — Los commits habían salido con `Co-Authored-By: Claude`, que
+contradice una regla escrita del proyecto. Sacarlo obligó a reescribir tres
+commits YA PUSHEADOS: `--amend` en el backend, y en el front un
+`reset --soft` a la base rehaciendo los dos con el mismo staging, porque
+`rebase -i` es interactivo y no corre en este entorno. Se verificó que el
+hash del árbol no cambiara —sólo los mensajes— y el push fue con
+`--force-with-lease`, que habría fallado en vez de pisar trabajo ajeno.
+> sacal el co-authored by claude
+
+**50.**
+> ya lo pusheaste?
+
+---
+
+## 19. El tipo de cambio, ahora sí de un lado
 
 Cambió la respuesta del prompt 43 y del apéndice: hasta acá el tipo de cambio
 lo escribía la persona porque no había price feed. Ahora hay uno —Binance— y
 la app completa el campo sola. Lo que **no** cambió es que la tasa se sigue
 congelando en el gasto (prompt 41): Binance saca el tipeo, no el congelado.
 
-**48.** — Escrito con un typo ("se estpa"). Pidió analizar primero cómo se
+**51.** — Escrito con un typo ("se estpa"). Pidió analizar primero cómo se
 manejaba antes de tocar nada.
 > analiza como se estpa manejando el tipo de cambio ya que quiero que se integre con la api de binance para no tener que ponerlo manualmente
 
-**49.** — Las respuestas a tres preguntas: (1) mediana de los primeros 15
+**52.** — Las respuestas a tres preguntas: (1) mediana de los primeros 15
 avisos del lado vendedor del P2P —Binance no tiene mercado spot para el
 boliviano, así que la fuente es el "dólar Binance" del order book entre
 personas—; (2) si Binance no responde, el campo queda **vacío y recién ahí
@@ -292,17 +311,87 @@ editable**, no se pre-llena con nada; (3) backend y frontend, los dos.
 > 2. si, campo vacio y recien permitir editarlo
 > 3. ambos
 
-**50.**
+**53.**
 > pruebalo
 
 ---
 
-## 19. Documentación, la cuarta
+## 20. Documentación, la cuarta
 
-**51.** — El mismo pedido que el 37, el 42 y el 47, esta vez con la
+**54.** — El mismo pedido que el 37, el 42 y el 47, esta vez con la
 integración de Binance hecha. La segunda mitad ("prueba que los cambios están
 funcionando") es la que llenó el apéndice de verificación de esta tanda.
 > quiero que los prompts y su respuesta los vayas agregando al md PROMPTS tal cual se encuentra en el contenido que ya tiene. ademas quiero que pruebes que los cambios estáfuncionando correctamente
+
+---
+
+## 21. El tipo de cambio del dólar salía de un libro que no era un mercado
+
+**55.**
+> pull de ambos repositorios
+
+**56.** — Andaba. Y de paso confirmó que el USDT en Bolivia está a **12,43** y
+no a 6,96: el *hint* que tenía el campo era el oficial, casi la mitad. Pero
+apareció un problema real en el dólar, que el prompt 53 no podía haber visto
+porque sólo se nota comparando las dos puntas del libro.
+> probá que el cambio de Binance funcione
+
+**57.** — La elección entre "USD a la par" y "leer el lado BUY sólo para el
+dólar". El libro SELL de USD en P2P **no es un mercado USDT/USD**: son
+corredores de remesas por Zelle y GPay, cotizando 1,100 contra 0,997 del BUY.
+Leerlo valuaba cada gasto en dólares 10% por debajo — una cena de US$ 50
+entraba al ledger como 45,45 USDT en vez de 50,15.
+> Elijo la 2
+
+**58.**
+> comitea
+
+**59.**
+> dale, push
+
+---
+
+## 22. Tiempo real
+
+**60.** — La respuesta corta era **no había**: cero WebSocket, cero SSE, cero
+polling. Pero el ledger sí aguantaba varios usuarios a la vez, y las dos
+cosas conviene no confundirlas — se midió una por una.
+> Ahora quiero saber el estado de la interacción en tiempo real en mi app
+
+**61.** — En ese orden, que es el orden correcto: primero
+`AppLifecycleListener`, que son diez líneas y tapa el caso más común, y
+recién después el stream.
+> Arranca por el refresh al volver a la app, luego aplica sse para cuando se registra un pago y donde haga falta para que la experiencia de usuario sea mejor
+
+**62.** — Sí. Verificado manejando la app REAL en un navegador: sesión
+inyectada en `localStorage`, grupo abierto con un click, y después nadie
+tocando nada. Cuatro peticiones salieron solas **8ms** después del pago.
+> Ahora, si se registra un pago, se actualiza automáticamente la ui de todos los usuarios de ese grupo?
+
+---
+
+## 23. El gasto por ítems
+
+**63.** — Media observación correcta, y la mitad correcta era la que importaba.
+El campo de monto por ítem SÍ existía, pero era invisible —sin borde, sin
+hint, y con un prefijo que Flutter no dibuja mientras el campo está vacío y
+sin foco—, así que la propina parecía lo único configurable de la tarjeta.
+> Ahora vamos a analizar el gasto por items, actualmente no se puede agregar lo gastado al comprar un item, solo lo que se puede poner la propina, o como funciona más o menos esa funcionalidad?
+
+**64.** — El dominio y el server aceptaban las seis estrategias por ítem desde
+el primer día; la pantalla ofrecía dos. Cambio de UI puro: no se tocó una
+línea del backend.
+> splits por item
+
+---
+
+## 24. Cierre
+
+**65.**
+> commitea y push a ambos
+
+**66.**
+> actualiza el PROMPTS.md con estos últimos pedidos
 
 ---
 
@@ -323,11 +412,17 @@ que conviene poder defender:
 | El cálculo en vivo es un preview | `allocate` en Dart es un porte línea por línea del dominio del server, verificado contra él en 240 casos. Si alguna vez difieren, **manda el server**. |
 | Una membresía no se borra, se marca con `left_at` | El ledger apunta a ella. Borrarla dejaría deudas sin dueño, así que salir de un grupo es un hecho con fecha, igual que todo lo demás acá. |
 | Las invitaciones viven en su propia tabla | Una fila en `group_members` no significa "esta persona está asociada al grupo", significa **a esta persona se le puede cobrar plata**. Una invitación pendiente ahí dejaría que la base acepte un gasto a nombre de alguien que todavía no dijo que sí. |
-| El tipo de cambio se congela en el gasto | Decidido en el prompt 41. Un gasto es un hecho, y el cambio de esa noche es parte del hecho. Convertir al leer haría que los saldos se muevan solos de un día para el otro, que un pago completo deje de serlo a la mañana siguiente, y que un saldo de la semana pasada no se pueda reproducir. Que el número lo traiga Binance (prompts 48-50) no cambia nada de esto: se completa solo, pero viaja en el alta del gasto y queda guardado en la fila igual que uno tipeado. |
+| El tipo de cambio se congela en el gasto | Decidido en el prompt 41. Un gasto es un hecho, y el cambio de esa noche es parte del hecho. Convertir al leer haría que los saldos se muevan solos de un día para el otro, que un pago completo deje de serlo a la mañana siguiente, y que un saldo de la semana pasada no se pueda reproducir. Que el número lo traiga Binance (prompts 51-53) no cambia nada de esto: se completa solo, pero viaja en el alta del gasto y queda guardado en la fila igual que uno tipeado. |
 | Convertir el TOTAL una vez, y recién después dividir | Las partes en la moneda original se usan como **pesos** para repartir el total ya convertido. Convertir cada parte por separado redondea cada una por separado y dejan de sumar el total: `round(a×r) + round(b×r)` no es `round((a+b)×r)`. Es la misma pista del prompt 35, un nivel más arriba. |
 | Un gasto en USDT solo se acepta a la par | Se valida en el dominio, en un CHECK de la base, y el campo directamente no aparece en la pantalla. "1 USDT = 1,02 USDT" no es un tipo de cambio, es un error de tipeo. |
 | Menos de un centavo de USDT se rechaza | Bs 0,01 a 6,96 convierte a 0. Redondear para arriba inventa plata y para abajo cobra por nada, así que devuelve 422 `amount_too_small`. |
-| El tipo de cambio lo trae Binance | Prompts 48-50. El backend consulta el order book P2P de Binance (`GET /rates/:moneda`), toma la mediana de los primeros 15 avisos del lado vendedor y la cachea 5 minutos. La app completa el campo con ese número y lo deja de solo lectura; USDT ni se consulta —es la par y punto—. Si Binance no responde y no hay nada en cache, el endpoint contesta `503` y el campo vuelve a ser un input vacío y editable, como estaba antes. Editar un gasto viejo nunca vuelve a consultar: muestra la tasa con la que se guardó. El endpoint P2P no es API documentada de Binance —es la que usa su web— así que puede cambiar de forma; por eso el cache, el valor viejo como red de contención, y al final el campo a mano. |
+| El tipo de cambio lo trae Binance | Prompts 51-53. El backend consulta el order book P2P de Binance (`GET /rates/:moneda`), toma la mediana de los primeros 15 avisos del lado vendedor y la cachea 5 minutos. La app completa el campo con ese número y lo deja de solo lectura; USDT ni se consulta —es la par y punto—. Si Binance no responde y no hay nada en cache, el endpoint contesta `503` y el campo vuelve a ser un input vacío y editable, como estaba antes. Editar un gasto viejo nunca vuelve a consultar: muestra la tasa con la que se guardó. El endpoint P2P no es API documentada de Binance —es la que usa su web— así que puede cambiar de forma; por eso el cache, el valor viejo como red de contención, y al final el campo a mano. |
+| El lado del libro P2P depende de la moneda | Prompt 57. Bolivianos leen SELL, dólares leen BUY. No es criterio distinto, es una corrección: Binance no tiene un mercado USDT/USD de verdad, y su lado SELL para USD son remesas con 10% de prima. El mapa está tipado sobre las monedas gastables menos USDT, así que agregar una moneda no compila hasta que alguien decida de qué lado va — un default silencioso es exactamente cómo se vuelve a colar un 10%. |
+| El evento de tiempo real es un aviso, no un dato | Dice "cayó un pago en este grupo", nunca cuánto ni a quién. Mandar montos sería una segunda fuente de verdad para la plata. Y hace que perder eventos sea inofensivo: el que estuvo desconectado reconecta, recarga una vez y queda al día, porque no hay historia que reproducir. |
+| SSE y no WebSocket | Todo lo que tiene que viajar va en un solo sentido, y para hablar el cliente ya tiene el REST. Un WebSocket compraría un canal de vuelta que nadie usa, a cambio de un segundo protocolo y una reconexión que el navegador regala. El bus es en memoria y de un solo proceso; el reemplazo obvio, si algún día hace falta, es LISTEN/NOTIFY de Postgres. |
+| El token por query string, sólo en el stream | `EventSource` no puede mandar headers — la API del navegador no lo permite. La alternativa era un stream sin autenticar de la actividad privada de un grupo. Acotado a una ruta, es una lectura, y el token expira solo. El header sigue ganando cuando vienen los dos. |
+| El cliente SSE nativo NO es un `async*` | Un `async*` parado en `await for` sobre un socket callado deadlockea al cancelar: cancelar espera al generador, el generador espera al stream interno, y ese espera datos que no van a llegar. **Medido: `cancel()` no volvía a los 5s**, y la pantalla lo llama en cada `dispose`. Como `StreamController` que mata el socket primero, vuelve en 8ms. |
+| `_Division` es una clase, no un widget | Prompt 64. La mitad "gente" de un split la usan el gasto entero y cada ítem; escribir un segundo editor adentro de la tarjeta habría sido duplicar la lectura de porcentajes, el "¿suma 100?" y el autocompletado. Es una clase y no un widget porque el padre tiene que poder preguntar cómo quedó en cualquier momento — un hijo con estado propio serían GlobalKeys y manos en el State ajeno. Un solo enum de modos, filtrado por contexto. |
 | Un pago lo registran las dos puntas, o el anfitrión | Prompts 44 a 46. Registrar un pago mueve el saldo de otro, así que no es una nota que cualquiera del grupo deje sobre dos terceros. "Anfitrión" no es un rol nuevo: es `expense_groups.created_by`, que ya existía. |
 | Eliminar suma a quien lo registró | El motivo más común para borrar un pago es que quien lo tipeó se equivocó. Si tiene que ir a buscar al anfitrión por un typo, la corrección no se hace. |
 | 403 acá, y no 404 como en `requireMembership` | El 404 existe para no confirmar que un grupo existe. Acá la persona ya es miembro y ya ve el grupo: no queda nada que esconder, lo único que se niega es la escritura. |
@@ -353,6 +448,19 @@ Sin tests, la verificación fue toda contra el sistema corriendo:
   anfitrión, dos que se deben plata, y un cuarto sin nada que ver. Cada quién
   puede y cada quién no, en registrar y en eliminar, incluido el caso del
   prompt 46: el cuarto integrante recibe **403** en las dos operaciones.
+- **Tiempo real** (prompts 61-62): el stream se probó en tres niveles.
+  Contra el server —401 sin token, **404 a alguien ajeno al grupo**, los cinco
+  tipos de evento, dos oyentes a la vez, y que un gasto de OTRO grupo no se
+  filtre—; con `EventSource` de verdad en un navegador cross-origin, tres
+  corridas seguidas; y manejando la app real, donde un pago hecho desde afuera
+  disparó **cuatro peticiones solas a los 8ms** sin que nadie tocara la
+  pantalla. El cliente nativo se probó por separado con Dart real: el evento
+  parsea, y `cancel()` vuelve en 8ms.
+- **Ítems mixtos** (prompt 64): una cuenta de seis líneas, cada una dividida
+  distinto —iguales, 30/70, partes 1:1:2, mixta, montos exactos, y propina por
+  consumo—. El reparto calculado en Dart dio **igual al del server persona por
+  persona**, y las partes sumaron exacto tanto en Bs (26000) como en USDT
+  (2092). El split vuelve a leerse idéntico.
 - **Ida y vuelta del split**: las seis estrategias se guardan y se releen
   idénticas, incluida la mixta —donde la *ausencia* de monto es el
   significado— y los ítems anidados con propina proporcional.
@@ -360,8 +468,9 @@ Sin tests, la verificación fue toda contra el sistema corriendo:
   errores de consola, `localStorage` sobrevive al refresh, y se sacaron
   capturas del cálculo en vivo (Bs 100 entre 3, el recálculo al cambiar el
   total, y un centavo entre tres).
-- **Tipo de cambio de Binance** (prompt 50): el proveedor P2P se probó en vivo
-  —BOB ≈ 12,51 Bs/USDT, USD ≈ 1,05—. Contra el server con Postgres, 14
+- **Tipo de cambio de Binance** (prompt 53): el proveedor P2P se probó en vivo
+  —BOB ≈ 12,51 Bs/USDT—. El USD de esa medición (≈ 1,05) resultó estar leyendo
+  el lado equivocado del libro; se corrigió en el prompt 57. Contra el server con Postgres, 14
   comprobaciones en verde: `/rates/BOB` y `/rates/USD` contestan `binance-p2p`,
   `/rates/USDT` la par sin tocar la red, `/rates/ARS` `400`, sin token `401`,
   la segunda llamada sale de cache en 3 ms, y con Binance inalcanzable y nada
@@ -380,8 +489,19 @@ Sin tests, la verificación fue toda contra el sistema corriendo:
   `rateRepository` opcional —las pantallas lo dejan en null y usan el
   repositorio real—, el mismo patrón que `createApp(..., rates)` en el server.
 
-**Lo que no se verificó**: nadie hizo el flujo completo apretando botones en
-un navegador real. Manejar el input de texto de Flutter web por CDP no se
-pudo — CanvasKit dibuja en canvas y el input vive en un shadow DOM. El
-autocompletado del tipo de cambio se probó con el harness y contra el
-endpoint, no tocando el dropdown en un navegador.
+**Sobre manejar la app en un navegador de verdad**: durante mucho tiempo no
+se pudo, y quedó anotado como el agujero de esta lista. El input de texto de
+Flutter web no se puede manejar por CDP —CanvasKit dibuja en un canvas y el
+input vive en un shadow DOM—, así que no había forma de pasar el login.
+
+Se resolvió sin tocar el teclado: se **inyecta la sesión directo en
+`localStorage`**, en el formato que `flutter_secure_storage_web` sabe leer
+—se genera la clave AES-GCM, se cifra `access_token` y `user_id`, y se
+guardan bajo `FlutterSecureStorage.*`—. La app arranca ya logueada y desde
+ahí los clicks alcanzan, porque lo que no llega al canvas es el texto, no el
+mouse. Con eso se verificaron la actualización en vivo y la pantalla de
+ítems, con capturas.
+
+**Lo que sigue sin verificarse**: escribir a mano en un campo dentro del
+navegador. Todo lo que se probó ahí se hizo con clicks, sesión inyectada, y
+datos cargados por la API.
