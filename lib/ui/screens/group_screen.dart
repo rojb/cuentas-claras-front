@@ -83,7 +83,7 @@ class _GroupScreenState extends State<GroupScreen> {
 
     final what = switch (event.kind) {
       'payment.recorded' => '$who registró un pago',
-      'payment.deleted' => '$who eliminó un pago',
+      'payment.deleted' => '$who anuló un pago',
       'expense.created' => '$who cargó un gasto',
       'expense.replaced' => '$who editó un gasto',
       'expense.deleted' => '$who eliminó un gasto',
@@ -186,7 +186,12 @@ class _GroupScreenState extends State<GroupScreen> {
     }
   }
 
-  /// Takes a payment back out of the ledger.
+  /// Takes a payment out of the balances, and leaves it in the history.
+  ///
+  /// The wording says "anular" and not "eliminar" because that is what
+  /// happens: the row survives, struck through, with the name of whoever did
+  /// it. Calling it deletion would promise the record disappears, and it
+  /// deliberately does not.
   ///
   /// The button that leads here is only drawn for people allowed to use it,
   /// but that is a courtesy, not the rule: the server checks again and
@@ -198,12 +203,13 @@ class _GroupScreenState extends State<GroupScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('¿Eliminar el pago?'),
+        title: const Text('¿Anular el pago?'),
         content: Text(
           'El pago de ${names?.nameOf(payment.fromUserId) ?? 'alguien'} a '
           '${names?.nameOf(payment.toUserId) ?? 'alguien'} por '
-          '${payment.inUsdt.format()} deja de contar, y los saldos vuelven a '
-          'incluir esa deuda.',
+          '${payment.inUsdt.format()} deja de contar y los saldos vuelven a '
+          'incluir esa deuda.\n\nVa a seguir apareciendo en el historial, '
+          'tachado y con tu nombre.',
         ),
         actions: [
           TextButton(
@@ -212,7 +218,7 @@ class _GroupScreenState extends State<GroupScreen> {
           ),
           FilledButton(
             onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Eliminar'),
+            child: const Text('Anular'),
           ),
         ],
       ),
@@ -1159,6 +1165,7 @@ class _HistoryTab extends StatelessWidget {
             itemBuilder: (context, index) {
               final payment = payments[index];
               final converted = payment.currencyCode != settlementCurrency;
+              final voided = payment.isVoided;
 
               // Somebody can record a payment they did not make — the host
               // can — so it is worth saying who wrote it down when the two
@@ -1167,14 +1174,29 @@ class _HistoryTab extends StatelessWidget {
                   ? null
                   : detail?.nameOf(payment.createdBy);
 
+              // A voided payment is drawn struck through and greyed out
+              // rather than dropped from the list. It stopped counting; it
+              // did not stop having happened, and a history somebody can
+              // quietly take rows out of is not a history.
+              final faded = theme.colorScheme.outline;
+
               return ListTile(
-                leading: PersonAvatar(
-                  userId: payment.fromUserId,
-                  initials: detail?.byId[payment.fromUserId]?.initials ?? '?',
+                leading: Opacity(
+                  opacity: voided ? 0.4 : 1,
+                  child: PersonAvatar(
+                    userId: payment.fromUserId,
+                    initials: detail?.byId[payment.fromUserId]?.initials ?? '?',
+                  ),
                 ),
                 title: Text(
                   '${detail?.nameOf(payment.fromUserId) ?? '...'}  →  '
                   '${detail?.nameOf(payment.toUserId) ?? '...'}',
+                  style: voided
+                      ? TextStyle(
+                          decoration: TextDecoration.lineThrough,
+                          color: faded,
+                        )
+                      : null,
                 ),
                 subtitle: Text(
                   [
@@ -1183,7 +1205,15 @@ class _HistoryTab extends StatelessWidget {
                       'pagado en '
                           '${payment.amount.format(currencyCode: payment.currencyCode)}',
                     if (recorder != null) 'registró $recorder',
+                    // Last, because it is the thing that changes what the row
+                    // means. Without a name when the server never recorded
+                    // one, rather than inventing somebody.
+                    if (voided)
+                      payment.voidedBy == null
+                          ? 'anulado'
+                          : 'anulado por ${detail?.nameOf(payment.voidedBy!) ?? 'alguien'}',
                   ].join(' · '),
+                  style: voided ? TextStyle(color: faded) : null,
                 ),
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
@@ -1192,13 +1222,16 @@ class _HistoryTab extends StatelessWidget {
                       payment.inUsdt.format(),
                       style: theme.textTheme.titleSmall?.copyWith(
                         fontWeight: FontWeight.w600,
-                        color: theme.colorScheme.primary,
+                        color: voided ? faded : theme.colorScheme.primary,
+                        decoration:
+                            voided ? TextDecoration.lineThrough : null,
                       ),
                     ),
-                    // Drawn only for people the server would let through.
+                    // Drawn only for people the server would let through —
+                    // and never for something already void.
                     ?(payment.canBeDeletedBy(me, groupCreatedBy: groupCreatedBy)
                         ? IconButton(
-                            tooltip: 'Eliminar el pago',
+                            tooltip: 'Anular el pago',
                             icon: const Icon(Icons.delete_outline),
                             onPressed: () => onDelete(payment),
                           )

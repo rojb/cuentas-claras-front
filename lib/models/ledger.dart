@@ -68,6 +68,8 @@ class Payment {
     required this.inUsdt,
     required this.paidAt,
     required this.createdBy,
+    this.voidedAt,
+    this.voidedBy,
   });
 
   final String id;
@@ -92,12 +94,27 @@ class Payment {
   /// delete it again.
   final String createdBy;
 
+  /// When it was undone, or null while it still counts.
+  ///
+  /// A voided payment stays OUT of the balances and IN the history, struck
+  /// through. Money moving and then un-moving is a thing that happened, and a
+  /// record it can vanish from is not a record.
+  final DateTime? voidedAt;
+
+  /// Who undid it. Null for payments voided before the server recorded that,
+  /// which the screen shows as "anulado" with no name rather than guessing.
+  final String? voidedBy;
+
+  bool get isVoided => voidedAt != null;
+
   /// Whether [userId] may strike this payment through.
   ///
   /// Both ends of the payment, whoever recorded it, and whoever created the
-  /// group. Mirrors the rule the server enforces in deletePayment — the UI
-  /// hides the button, the server is what actually refuses.
+  /// group — and nobody at all once it is already void. Mirrors the rule the
+  /// server enforces in deletePayment; the UI hides the button, the server is
+  /// what actually refuses.
   bool canBeDeletedBy(String? userId, {required String groupCreatedBy}) =>
+      !isVoided &&
       userId != null &&
       (userId == createdBy ||
           userId == fromUserId ||
@@ -115,5 +132,9 @@ class Payment {
         inUsdt: Money(json['amountUsdtCents'] as int),
         paidAt: DateTime.parse(json['paidAt'] as String),
         createdBy: json['createdBy'] as String,
+        voidedAt: json['voidedAt'] is String
+            ? DateTime.tryParse(json['voidedAt'] as String)
+            : null,
+        voidedBy: json['voidedBy'] as String?,
       );
 }

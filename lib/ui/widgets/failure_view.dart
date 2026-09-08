@@ -47,7 +47,7 @@ const _byCode = <String, String>{
   'invalid_rate': 'Ese tipo de cambio no sirve. Un gasto en USDT va uno a uno.',
   'cannot_record_payment': 'Este pago lo pueden registrar las dos personas '
       'entre las que va, o el anfitrión del grupo.',
-  'cannot_delete_payment': 'Este pago lo pueden eliminar las dos personas '
+  'cannot_delete_payment': 'Este pago lo pueden anular las dos personas '
       'entre las que va, quien lo registró, o el anfitrión del grupo.',
   'amount_too_small': 'Ese monto es menos de un centavo de USDT.',
   'invalid_body': 'Faltan datos o están mal escritos.',
