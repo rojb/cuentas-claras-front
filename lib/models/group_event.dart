@@ -33,9 +33,11 @@ class GroupEvent {
 
   /// Whether this changes what people owe.
   ///
-  /// Everything except somebody joining or leaving does. Those two move the
-  /// member list, which is a different reload.
-  bool get movesTheLedger => !kind.startsWith('member.');
+  /// Everything except the ones about people: joining, leaving, and being
+  /// invited. Those move a list of names, not a balance, and they need a
+  /// different reload.
+  bool get movesTheLedger =>
+      !kind.startsWith('member.') && !kind.startsWith('invitation.');
 
   /// True when this is the server telling us about something we just did.
   bool isEchoOf(String? userId) => userId != null && actorId == userId;

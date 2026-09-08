@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../app/dependencies.dart';
 import '../../models/group.dart';
+import '../../models/group_event.dart';
 import '../../models/invitation.dart';
 import '../../models/money.dart';
 import '../load_state.dart';
@@ -20,6 +23,7 @@ class _GroupsScreenState extends State<GroupsScreen> {
   late final Loader<List<ExpenseGroup>> _groups;
   late final Loader<List<Invitation>> _invitations;
   late final AppLifecycleListener _lifecycle;
+  StreamSubscription<GroupEvent>? _events;
 
   @override
   void initState() {
@@ -37,14 +41,52 @@ class _GroupsScreenState extends State<GroupsScreen> {
     // for, and it arrives while the app is closed as often as not. Coming
     // back to it is the moment to look.
     _lifecycle = AppLifecycleListener(onResume: _refresh);
+
+    // And while the app IS open, it does not have to wait to be looked at.
+    _events = Dependencies.of(context).events.forMe().listen(_onEvent);
   }
 
   @override
   void dispose() {
+    // First: a late event arriving into disposed loaders would be a crash on
+    // a screen nobody is looking at any more.
+    _events?.cancel();
     _lifecycle.dispose();
     _groups.dispose();
     _invitations.dispose();
     super.dispose();
+  }
+
+  /// Something arrived for this person while they were looking at the list.
+  ///
+  /// The reload is the part that matters — the invitation card appearing at
+  /// the top IS the notification. The snackbar exists so that somebody
+  /// looking at the bottom of a long list of groups notices that the top of
+  /// it just changed.
+  ///
+  /// The name comes from the RELOADED invitation, never from the event: the
+  /// event carries no group name on purpose, and inventing one on the client
+  /// would be the app telling you something the ledger never said.
+  Future<void> _onEvent(GroupEvent event) async {
+    await _refresh();
+    if (!mounted || event.kind != 'invitation.received') return;
+
+    final arrived = _invitations.state.valueOrNull
+        ?.where((invitation) => invitation.groupId == event.groupId)
+        .firstOrNull;
+
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(
+            arrived == null
+                ? 'Te invitaron a un grupo'
+                : '${arrived.invitedByName} te invitó a ${arrived.groupName}',
+          ),
+          duration: const Duration(seconds: 4),
+        ),
+      );
   }
 
   /// The two go together: answering an invitation moves both lists, and this
