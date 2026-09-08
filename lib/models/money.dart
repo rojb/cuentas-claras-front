@@ -33,40 +33,9 @@ extension type const Money(int cents) implements Object {
   /// Returns null instead of throwing, because a half-typed amount is the
   /// normal state of a text field, not an error.
   static Money? tryParse(String input) {
-    final trimmed = input.trim();
-    if (trimmed.isEmpty) return null;
-
-    // Whichever separator comes last is the decimal one; the other is
-    // grouping. "1.234,56" and "1,234.56" are both unambiguous this way.
-    final lastComma = trimmed.lastIndexOf(',');
-    final lastDot = trimmed.lastIndexOf('.');
-    final decimalMark = lastComma > lastDot ? ',' : '.';
-
-    final digitsOnly = trimmed
-        .split('')
-        .where((character) => _isDigit(character) || character == decimalMark)
-        .join();
-
-    // "abc" survives the filter as an empty string, and an empty string would
-    // otherwise parse as zero. A field full of letters is not worth $0.00.
-    if (!digitsOnly.split('').any(_isDigit)) return null;
-
-    final parts = digitsOnly.split(decimalMark);
-    if (parts.length > 2) return null;
-
-    final whole = parts[0].isEmpty ? '0' : parts[0];
-    final fraction = parts.length == 2 ? parts[1].padRight(2, '0') : '00';
-    if (fraction.length > 2) return null;
-
-    final wholeCents = int.tryParse(whole);
-    final fractionCents = int.tryParse(fraction);
-    if (wholeCents == null || fractionCents == null) return null;
-
-    return Money(wholeCents * 100 + fractionCents);
+    final cents = parseScaled(input, decimals: 2);
+    return cents == null ? null : Money(cents);
   }
-
-  static bool _isDigit(String character) =>
-      character.codeUnitAt(0) >= 0x30 && character.codeUnitAt(0) <= 0x39;
 
   /// "$ 1.234,56", and "-$ 1.234,56" when somebody is in the red.
   ///
@@ -87,7 +56,7 @@ extension type const Money(int cents) implements Object {
   /// 1.234,56, while the "Latin America" locale groups as 1,234.56. They are
   /// not interchangeable, and picking the wrong one silently moves a decimal
   /// point.
-  String format({String currencyCode = 'ARS', String locale = 'es'}) {
+  String format({String currencyCode = settlementCurrency, String locale = 'es'}) {
     final numbers = NumberFormat.decimalPattern(locale);
 
     final sign = cents < 0 ? '-' : '';
@@ -101,23 +70,123 @@ extension type const Money(int cents) implements Object {
   /// The same amount without a currency symbol, for text fields.
   String get asPlainText => (cents / 100).toStringAsFixed(2);
 
-  /// Falls back to the code itself for anything unlisted. The backend accepts
-  /// any ISO-4217 code, so a group can exist in a currency this app has never
-  /// heard of — showing "PYG 1.000,00" is worth more than showing nothing.
+  /// Falls back to the code itself for anything unlisted, so a currency the
+  /// server starts accepting before this app knows about it still renders as
+  /// "PYG 1.000,00" instead of disappearing.
   static String _symbolFor(String currencyCode) =>
       currencies[currencyCode]?.symbol ?? currencyCode;
 }
 
-/// The currencies a group can be created in.
+/// The unit every balance, settlement and debt in this app is expressed in.
+///
+/// A group has no currency of its own. Its expenses each carry the money they
+/// were actually paid in, and every one of them is converted into this on the
+/// way to the server — once, at the rate agreed that day.
+const settlementCurrency = 'USDT';
+
+/// What an expense can have been paid in.
 ///
 /// One map, so adding a currency is a single edit. The alternative — a symbol
 /// switch here and a hardcoded list of codes in the dropdown — is how you end
-/// up able to pick a currency the formatter does not recognise.
+/// up able to pick a currency the formatter does not recognise. It also has
+/// to agree with SPENDABLE_CURRENCIES on the server, which is the list that
+/// actually decides: anything else comes back a 400.
 const currencies = <String, ({String symbol, String name})>{
-  'ARS': (symbol: r'$', name: 'Peso argentino'),
+  'USDT': (symbol: 'USDT', name: 'Dólar cripto'),
   'BOB': (symbol: 'Bs', name: 'Boliviano'),
-  'UYU': (symbol: r'$U', name: 'Peso uruguayo'),
-  'BRL': (symbol: r'R$', name: 'Real brasileño'),
   'USD': (symbol: r'US$', name: 'Dólar estadounidense'),
-  'EUR': (symbol: '€', name: 'Euro'),
 };
+
+/// How many millionths of a currency buy one USDT.
+///
+/// A rate is a decimal by nature — 6,96 bolivianos to the dollar — and a
+/// decimal is exactly what this file exists to keep away from money. So it is
+/// scaled by a million and carried as an int, the same way the server stores
+/// it: 6,96 is 6960000. Six digits is what USDT itself uses on chain, and it
+/// leaves room for a rate like 6,957382 that is not a rounding of anything.
+extension type const Rate(int micros) implements Object {
+  static const int parMicros = 1000000;
+
+  /// One USDT is one USDT: the only rate that is not a matter of opinion.
+  static const Rate par = Rate(parMicros);
+
+  bool get isPar => micros == parMicros;
+  bool get isUsable => micros > 0;
+
+  /// Returns null instead of throwing: a half-typed rate is the normal state
+  /// of a text field, not an error.
+  static Rate? tryParse(String input) {
+    final micros = parseScaled(input, decimals: 6);
+    return micros == null || micros <= 0 ? null : Rate(micros);
+  }
+
+  /// "6,96" — trailing zeros trimmed, because 6,960000 reads like precision
+  /// nobody claimed.
+  String format({String locale = 'es'}) {
+    final whole = micros ~/ parMicros;
+    final fraction =
+        (micros % parMicros).toString().padLeft(6, '0').replaceAll(RegExp(r'0+$'), '');
+    final separator = NumberFormat.decimalPattern(locale).symbols.DECIMAL_SEP;
+
+    return fraction.isEmpty ? '$whole' : '$whole$separator$fraction';
+  }
+
+  /// The same rate for a text field: always a dot, never grouped.
+  String get asPlainText {
+    final fraction =
+        (micros % parMicros).toString().padLeft(6, '0').replaceAll(RegExp(r'0+$'), '');
+    return fraction.isEmpty
+        ? '${micros ~/ parMicros}'
+        : '${micros ~/ parMicros}.$fraction';
+  }
+}
+
+/// Reads a typed decimal into an integer scaled by 10^[decimals].
+///
+/// "1234,56", "1234.56", "1.234,56" and "1234" all work: whichever separator
+/// comes last is the decimal one and the other is grouping, which makes
+/// "1.234,56" and "1,234.56" both unambiguous. Money uses two decimals and a
+/// rate uses six, and they share this because a second hand-rolled decimal
+/// parser is a second place for a decimal point to move on its own.
+///
+/// Returns null for anything it cannot read, including more decimals than
+/// asked for — silently dropping the digits somebody typed is worse than
+/// telling them the field is not valid yet.
+int? parseScaled(String input, {required int decimals}) {
+  final trimmed = input.trim();
+  if (trimmed.isEmpty) return null;
+
+  final lastComma = trimmed.lastIndexOf(',');
+  final lastDot = trimmed.lastIndexOf('.');
+  final decimalMark = lastComma > lastDot ? ',' : '.';
+
+  final digitsOnly = trimmed
+      .split('')
+      .where((character) => _isDigit(character) || character == decimalMark)
+      .join();
+
+  // "abc" survives the filter as an empty string, and an empty string would
+  // otherwise parse as zero. A field full of letters is not worth 0,00.
+  if (!digitsOnly.split('').any(_isDigit)) return null;
+
+  final parts = digitsOnly.split(decimalMark);
+  if (parts.length > 2) return null;
+
+  final whole = parts[0].isEmpty ? '0' : parts[0];
+  final fraction = parts.length == 2 ? parts[1] : '';
+  if (fraction.length > decimals) return null;
+
+  final wholeValue = int.tryParse(whole);
+  final fractionValue = int.tryParse(fraction.padRight(decimals, '0'));
+  if (wholeValue == null || fractionValue == null) return null;
+
+  var scale = 1;
+  for (var i = 0; i < decimals; i++) {
+    scale *= 10;
+  }
+
+  return wholeValue * scale + fractionValue;
+}
+
+bool _isDigit(String character) =>
+    character.codeUnitAt(0) >= 0x30 && character.codeUnitAt(0) <= 0x39;

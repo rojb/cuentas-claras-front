@@ -37,6 +37,8 @@ class LedgerRepository {
     required String groupId,
     required String description,
     required Money total,
+    required String currencyCode,
+    required Rate rate,
     required Split split,
     String? paidBy,
     DateTime? spentAt,
@@ -46,6 +48,8 @@ class LedgerRepository {
       body: _expenseBody(
         description: description,
         total: total,
+        currencyCode: currencyCode,
+        rate: rate,
         split: split,
         paidBy: paidBy,
         spentAt: spentAt,
@@ -69,6 +73,8 @@ class LedgerRepository {
     required String expenseId,
     required String description,
     required Money total,
+    required String currencyCode,
+    required Rate rate,
     required Split split,
     String? paidBy,
     DateTime? spentAt,
@@ -78,6 +84,8 @@ class LedgerRepository {
       body: _expenseBody(
         description: description,
         total: total,
+        currencyCode: currencyCode,
+        rate: rate,
         split: split,
         paidBy: paidBy,
         spentAt: spentAt,
@@ -87,9 +95,16 @@ class LedgerRepository {
     return Expense.fromJson(response);
   }
 
+  /// Every amount in here — the total and every number inside the split —
+  /// is in [currencyCode]. The rate travels beside them so the server can
+  /// convert the total ONCE and freeze the result on the expense; nothing is
+  /// converted here, because a preview that disagreed with the ledger by a
+  /// cent would be worse than no preview at all.
   static Map<String, dynamic> _expenseBody({
     required String description,
     required Money total,
+    required String currencyCode,
+    required Rate rate,
     required Split split,
     String? paidBy,
     DateTime? spentAt,
@@ -97,6 +112,8 @@ class LedgerRepository {
       {
         'description': description,
         'totalCents': total.cents,
+        'currencyCode': currencyCode,
+        'rateMicros': rate.micros,
         'split': split.toJson(),
         'paidBy': ?paidBy,
         if (spentAt != null) 'spentAt': spentAt.toUtc().toIso8601String(),
@@ -151,12 +168,16 @@ class LedgerRepository {
     required String groupId,
     required String toUserId,
     required Money amount,
+    required String currencyCode,
+    required Rate rate,
     String? fromUserId,
     DateTime? paidAt,
   }) async {
     final response = await _api.post('/groups/$groupId/payments', body: {
       'toUser': toUserId,
       'amountCents': amount.cents,
+      'currencyCode': currencyCode,
+      'rateMicros': rate.micros,
       'fromUser': ?fromUserId,
       if (paidAt != null) 'paidAt': paidAt.toUtc().toIso8601String(),
     }) as Map<String, dynamic>;

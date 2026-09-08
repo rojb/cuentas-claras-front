@@ -55,12 +55,23 @@ class SplitEditor extends StatefulWidget {
     required this.members,
     required this.currencyCode,
     required this.total,
+    this.rate,
     this.initial,
   });
 
   final List<GroupMember> members;
+
+  /// The currency the expense was paid in. EVERY number this editor shows
+  /// and every number it collects is in it: the split is what the people
+  /// agreed to, and they agreed to it in the money they were holding.
   final String currencyCode;
+
   final Money total;
+
+  /// What turns those amounts into the unit the ledger settles in. Null while
+  /// the rate field is empty or half-typed, which just means the second line
+  /// under each name is not ready yet.
+  final Rate? rate;
 
   /// The split to reopen when editing an existing expense. Null when adding a
   /// new one, which starts with everybody selected and an equal division.
@@ -435,6 +446,25 @@ class SplitEditorState extends State<SplitEditor> {
     return split == null ? null : allocate(split, widget.total);
   }
 
+  /// The same division, in the unit the ledger settles in.
+  ///
+  /// Not [_preview] converted person by person. The total is converted once
+  /// and the native shares become the weights that divide it, exactly the way
+  /// the server does it — converting each row on its own would round each one
+  /// on its own and the column would stop adding up to the total.
+  ///
+  /// Null when there is nothing to convert or no rate yet.
+  Map<String, Money>? get _usdtPreview {
+    final rate = widget.rate;
+    if (rate == null || widget.currencyCode == settlementCurrency) return null;
+    if (widget.total.isZero) return null;
+
+    final split = _read().split;
+    return split == null
+        ? null
+        : allocateInSettlement(split, widget.total, rate);
+  }
+
   // ---------------------------------------------------------------------
   // Build
   // ---------------------------------------------------------------------
@@ -492,6 +522,7 @@ class SplitEditorState extends State<SplitEditor> {
 
   Widget _buildPeopleEditor(ThemeData theme) {
     final preview = _preview;
+    final inUsdt = _usdtPreview;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -501,6 +532,7 @@ class SplitEditorState extends State<SplitEditor> {
             member: member,
             selected: _selected.contains(member.userId),
             amount: preview?[member.userId],
+            usdtAmount: inUsdt?[member.userId],
             currencyCode: widget.currencyCode,
             onSelected: (selected) => setState(() {
               if (selected) {
@@ -646,6 +678,7 @@ class _PersonRow extends StatelessWidget {
     required this.currencyCode,
     required this.onSelected,
     this.amount,
+    this.usdtAmount,
     this.field,
   });
 
@@ -653,8 +686,13 @@ class _PersonRow extends StatelessWidget {
   final bool selected;
   final String currencyCode;
 
-  /// What this person ends up owing. Null while the split does not add up.
+  /// What this person ends up owing, in the expense's own currency. Null
+  /// while the split does not add up.
   final Money? amount;
+
+  /// The same amount in the unit the ledger settles in. Null when the expense
+  /// is already in it, or while there is no rate to convert with.
+  final Money? usdtAmount;
 
   final ValueChanged<bool> onSelected;
   final Widget? field;
@@ -674,12 +712,29 @@ class _PersonRow extends StatelessWidget {
             // The whole point of the exercise: what this person actually
             // pays, updated as you type, not after you save.
             subtitle: selected && owed != null
-                ? Text(
-                    owed.format(currencyCode: currencyCode),
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: theme.colorScheme.primary,
-                      fontWeight: FontWeight.w600,
-                    ),
+                ? Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        owed.format(currencyCode: currencyCode),
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: theme.colorScheme.primary,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      // What the ledger will actually charge them. Second,
+                      // and quieter: the first line is the one they can
+                      // check against the receipt.
+                      ?(usdtAmount == null
+                          ? null
+                          : Text(
+                              usdtAmount!.format(),
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: theme.colorScheme.outline,
+                              ),
+                            )),
+                    ],
                   )
                 : null,
             controlAffinity: ListTileControlAffinity.leading,

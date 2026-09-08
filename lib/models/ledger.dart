@@ -63,15 +63,46 @@ class Payment {
     required this.fromUserId,
     required this.toUserId,
     required this.amount,
+    required this.currencyCode,
+    required this.rate,
+    required this.inUsdt,
     required this.paidAt,
+    required this.createdBy,
   });
 
   final String id;
   final String groupId;
   final String fromUserId;
   final String toUserId;
+
+  /// What actually changed hands, in [currencyCode]. A debt is in USDT but
+  /// settling it is not obliged to be: handing somebody Bs 348 to cover
+  /// 50 USDT is a normal thing to do.
   final Money amount;
+  final String currencyCode;
+  final Rate rate;
+
+  /// What it moved in the ledger.
+  final Money inUsdt;
+
   final DateTime paidAt;
+
+  /// Who wrote this down, which is not always who paid: the group's creator
+  /// can record somebody else's payment. It is also half of who is allowed to
+  /// delete it again.
+  final String createdBy;
+
+  /// Whether [userId] may strike this payment through.
+  ///
+  /// Both ends of the payment, whoever recorded it, and whoever created the
+  /// group. Mirrors the rule the server enforces in deletePayment — the UI
+  /// hides the button, the server is what actually refuses.
+  bool canBeDeletedBy(String? userId, {required String groupCreatedBy}) =>
+      userId != null &&
+      (userId == createdBy ||
+          userId == fromUserId ||
+          userId == toUserId ||
+          userId == groupCreatedBy);
 
   factory Payment.fromJson(Map<String, dynamic> json) => Payment(
         id: json['id'] as String,
@@ -79,6 +110,10 @@ class Payment {
         fromUserId: json['fromUser'] as String,
         toUserId: json['toUser'] as String,
         amount: Money(json['amountCents'] as int),
+        currencyCode: json['currencyCode'] as String,
+        rate: Rate(json['rateMicros'] as int),
+        inUsdt: Money(json['amountUsdtCents'] as int),
         paidAt: DateTime.parse(json['paidAt'] as String),
+        createdBy: json['createdBy'] as String,
       );
 }

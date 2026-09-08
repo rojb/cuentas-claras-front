@@ -6,6 +6,7 @@ import '../../models/expense.dart';
 import '../../models/group.dart';
 import '../../models/invitation.dart';
 import '../../models/ledger.dart';
+import '../../models/money.dart';
 import '../../models/user.dart';
 import '../../repositories/groups_repository.dart';
 import '../group_controller.dart';
@@ -45,7 +46,31 @@ class _GroupScreenState extends State<GroupScreen> {
     super.dispose();
   }
 
-  String get _currency => widget.group.currencyCode;
+  /// What the group has been spending in lately, and at what rate, so the
+  /// expense form opens on the common case instead of a blank one. Read off
+  /// the ledger rather than remembered anywhere: whatever these people
+  /// actually used last is the best guess available, and nothing is invented
+  /// when there is no history.
+  ({String? currency, Map<String, Rate> rates}) get _recent {
+    final expenses = _controller.expenses.state.valueOrNull ?? const <Expense>[];
+    final rates = <String, Rate>{};
+
+    // Newest first, and putIfAbsent, so the FIRST rate seen for a currency is
+    // the most recent one used.
+    for (final expense in expenses) {
+      rates.putIfAbsent(expense.currencyCode, () => expense.rate);
+    }
+
+    return (currency: expenses.isEmpty ? null : expenses.first.currencyCode, rates: rates);
+  }
+
+  /// The signed-in user, and whether they created this group.
+  ///
+  /// "Anfitrión" is not a role in the schema and does not need to be: the
+  /// group already records who made it, and that is the person with a reason
+  /// to fix the ledger on everybody's behalf.
+  String? get _me => Dependencies.of(context).session.userId;
+  bool get _iAmTheHost => _me != null && _me == widget.group.createdBy;
 
   /// Opens the expense form, blank to add one or filled in to correct one.
   Future<void> _editExpense([Expense? existing]) async {
@@ -56,9 +81,10 @@ class _GroupScreenState extends State<GroupScreen> {
       MaterialPageRoute(
         builder: (_) => AddExpenseScreen(
           groupId: widget.group.id,
-          currencyCode: _currency,
           members: members,
           editing: existing,
+          recentCurrency: _recent.currency,
+          recentRates: _recent.rates,
         ),
       ),
     );
@@ -109,6 +135,54 @@ class _GroupScreenState extends State<GroupScreen> {
         SnackBar(content: Text(describeFailure(error))),
       );
       return false;
+    }
+  }
+
+  /// Takes a payment back out of the ledger.
+  ///
+  /// The button that leads here is only drawn for people allowed to use it,
+  /// but that is a courtesy, not the rule: the server checks again and
+  /// answers 403 either way. A UI check is a hint, never a lock.
+  Future<void> _deletePayment(Payment payment) async {
+    final ledger = Dependencies.of(context).ledger;
+    final names = _controller.detail.state.valueOrNull;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('¿Eliminar el pago?'),
+        content: Text(
+          'El pago de ${names?.nameOf(payment.fromUserId) ?? 'alguien'} a '
+          '${names?.nameOf(payment.toUserId) ?? 'alguien'} por '
+          '${payment.inUsdt.format()} deja de contar, y los saldos vuelven a '
+          'incluir esa deuda.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Eliminar'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      await ledger.deletePayment(
+        groupId: widget.group.id,
+        paymentId: payment.id,
+      );
+      await _controller.refreshLedger();
+    } on Object catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(describeFailure(error))),
+      );
     }
   }
 
@@ -350,7 +424,7 @@ class _GroupScreenState extends State<GroupScreen> {
   String _openBalanceTitle(Balance? mine) {
     if (mine == null || mine.isSettled) return 'Todavía hay cuentas pendientes';
 
-    final amount = mine.amount.absolute.format(currencyCode: _currency);
+    final amount = mine.amount.absolute.format();
 
     // The direction changes what the person has to DO, so it changes the
     // sentence. "Tenés un saldo abierto" would make somebody who is owed
@@ -382,9 +456,14 @@ class _GroupScreenState extends State<GroupScreen> {
       isScrollControlled: true,
       builder: (_) => RecordPaymentSheet(
         groupId: widget.group.id,
-        currencyCode: _currency,
         members: detail.members,
         suggestion: suggestion,
+        recentRates: _recent.rates,
+        me: _me,
+        // The host can write down a payment between any two people. Everybody
+        // else has to be one of the two, and the form says so rather than
+        // letting them fill it in and collect a 403.
+        isHost: _iAmTheHost,
       ),
     );
 
@@ -394,7 +473,7 @@ class _GroupScreenState extends State<GroupScreen> {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 3,
+      length: 4,
       child: Scaffold(
         appBar: AppBar(
           title: Text(widget.group.name),
@@ -447,6 +526,7 @@ class _GroupScreenState extends State<GroupScreen> {
               Tab(text: 'Gastos'),
               Tab(text: 'Saldos'),
               Tab(text: 'Liquidar'),
+              Tab(text: 'Historial'),
             ],
           ),
         ),
@@ -465,20 +545,39 @@ class _GroupScreenState extends State<GroupScreen> {
                 _ExpensesTab(
                   controller: _controller,
                   detail: detail,
-                  currencyCode: _currency,
                   onEdit: _editExpense,
                   onDelete: _deleteExpense,
                 ),
+                // No currency passed to either of these on purpose. A
+                // balance and a transfer are ALWAYS in USDT — that is the
+                // unit the ledger settles in, and the only one in which
+                // three currencies of spending can add up to zero.
                 _BalancesTab(
                   controller: _controller,
                   detail: detail,
-                  currencyCode: _currency,
                 ),
                 _SettleTab(
                   controller: _controller,
                   detail: detail,
-                  currencyCode: _currency,
                   onPay: (transfer) => _recordPayment(suggestion: transfer),
+                  // Offering "Registrar" on a transfer this person is not
+                  // allowed to write down would be handing them a button
+                  // that answers 403. Both ends of it count: the one who owes
+                  // it and the one waiting to be paid.
+                  canRecord: (transfer) =>
+                      _iAmTheHost ||
+                      transfer.fromUserId == _me ||
+                      transfer.toUserId == _me,
+                ),
+                // The ledger's second kind of fact. The other three tabs are
+                // all derived from expenses; this is the only place the
+                // payments that moved them are visible on their own.
+                _HistoryTab(
+                  controller: _controller,
+                  detail: detail,
+                  me: _me,
+                  groupCreatedBy: widget.group.createdBy,
+                  onDelete: _deletePayment,
                 ),
               ],
             );
@@ -493,14 +592,12 @@ class _ExpensesTab extends StatelessWidget {
   const _ExpensesTab({
     required this.controller,
     required this.detail,
-    required this.currencyCode,
     required this.onEdit,
     required this.onDelete,
   });
 
   final GroupController controller;
   final GroupDetail? detail;
-  final String currencyCode;
   final void Function(Expense expense) onEdit;
   final Future<bool> Function(Expense expense) onDelete;
 
@@ -552,11 +649,37 @@ class _ExpensesTab extends StatelessWidget {
                     'Pagó $payer · ${_labelFor(expense.splitStrategy)} · '
                     '${count == 1 ? '1 persona' : '$count personas'}',
                   ),
-                  trailing: Text(
-                    expense.total.format(currencyCode: currencyCode),
-                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  trailing: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        expense.total.format(
+                          currencyCode: expense.currencyCode,
+                        ),
+                        style: const TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                      // What it weighs in the ledger. Only when it is not
+                      // already the same number, because "USDT 10,00" twice
+                      // is noise.
+                      ?(expense.isAlreadySettlementCurrency
+                          ? null
+                          : Text(
+                              expense.totalInUsdt.format(),
+                              style: Theme.of(context).textTheme.bodySmall
+                                  ?.copyWith(
+                                    color: Theme.of(context).colorScheme.outline,
+                                  ),
+                            )),
+                    ],
                   ),
-                  onTap: () => onEdit(expense),
+                  onTap: () => _showExpenseDetail(
+                    context,
+                    expense: expense,
+                    detail: detail,
+                    onEdit: onEdit,
+                  ),
                 ),
               );
             },
@@ -594,12 +717,10 @@ class _BalancesTab extends StatelessWidget {
   const _BalancesTab({
     required this.controller,
     required this.detail,
-    required this.currencyCode,
   });
 
   final GroupController controller;
   final GroupDetail? detail;
-  final String currencyCode;
 
   @override
   Widget build(BuildContext context) {
@@ -651,7 +772,7 @@ class _BalancesTab extends StatelessWidget {
                           : 'debe',
                 ),
                 trailing: Text(
-                  balance.amount.absolute.format(currencyCode: currencyCode),
+                  balance.amount.absolute.format(),
                   style: theme.textTheme.titleMedium
                       ?.copyWith(color: colour, fontWeight: FontWeight.w600),
                 ),
@@ -668,14 +789,17 @@ class _SettleTab extends StatelessWidget {
   const _SettleTab({
     required this.controller,
     required this.detail,
-    required this.currencyCode,
     required this.onPay,
+    required this.canRecord,
   });
 
   final GroupController controller;
   final GroupDetail? detail;
-  final String currencyCode;
   final void Function(Transfer transfer) onPay;
+
+  /// Whether the person looking at this may write down that this particular
+  /// transfer happened.
+  final bool Function(Transfer transfer) canRecord;
 
   @override
   Widget build(BuildContext context) {
@@ -725,14 +849,16 @@ class _SettleTab extends StatelessWidget {
                       '${detail?.nameOf(transfer.toUserId) ?? '...'}',
                     ),
                     subtitle: Text(
-                      transfer.amount.format(currencyCode: currencyCode),
+                      transfer.amount.format(),
                       style: theme.textTheme.titleMedium
                           ?.copyWith(fontWeight: FontWeight.w600),
                     ),
-                    trailing: FilledButton.tonal(
-                      onPressed: () => onPay(transfer),
-                      child: const Text('Registrar'),
-                    ),
+                    trailing: canRecord(transfer)
+                        ? FilledButton.tonal(
+                            onPressed: () => onPay(transfer),
+                            child: const Text('Registrar'),
+                          )
+                        : null,
                   ),
                 ),
               const Padding(
@@ -803,4 +929,256 @@ class _InviteDialogState extends State<_InviteDialog> {
       ],
     );
   }
+}
+
+/// What one expense did to the ledger: who owes what because of it.
+///
+/// This is the "historial de deudas por gasto". The list row can only show a
+/// total and a strategy label; the debt an expense CREATED lives in its
+/// shares, and until now there was nowhere in the app to read them. Tapping a
+/// row used to jump straight into the editor, which meant the only way to see
+/// who owed what was to open the form that could change it.
+///
+/// Both amounts are shown for every person. The one in the expense's own
+/// currency is what they agreed to and can check against the receipt; the one
+/// in USDT is what the ledger actually charged them, and it is the number the
+/// balances are built from.
+Future<void> _showExpenseDetail(
+  BuildContext context, {
+  required Expense expense,
+  required GroupDetail? detail,
+  required void Function(Expense expense) onEdit,
+}) {
+  final theme = Theme.of(context);
+  final converted = !expense.isAlreadySettlementCurrency;
+
+  return showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    builder: (sheetContext) => SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(expense.description, style: theme.textTheme.titleLarge),
+            const SizedBox(height: 4),
+            Text(
+              'Pagó ${detail?.nameOf(expense.paidBy) ?? '...'} · '
+              '${_formatDate(expense.spentAt)}',
+              style: theme.textTheme.bodyMedium
+                  ?.copyWith(color: theme.colorScheme.outline),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(
+                  expense.total.format(currencyCode: expense.currencyCode),
+                  style: theme.textTheme.headlineSmall
+                      ?.copyWith(fontWeight: FontWeight.w600),
+                ),
+                if (converted) ...[
+                  const SizedBox(width: 12),
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: Text(
+                      '= ${expense.totalInUsdt.format()}',
+                      style: theme.textTheme.titleMedium
+                          ?.copyWith(color: theme.colorScheme.primary),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+            // The rate is shown because it is FROZEN here, not looked up. The
+            // amount above will still read the same next month, and this is
+            // the line that explains why.
+            if (converted) ...[
+              const SizedBox(height: 4),
+              Text(
+                'Al cambio de ese día: 1 $settlementCurrency = '
+                '${expense.rate.format()} '
+                '${currencies[expense.currencyCode]?.symbol ?? expense.currencyCode}',
+                style: theme.textTheme.bodySmall
+                    ?.copyWith(color: theme.colorScheme.outline),
+              ),
+            ],
+            const SizedBox(height: 20),
+            Text('Le toca a cada uno', style: theme.textTheme.titleSmall),
+            const SizedBox(height: 4),
+            Flexible(
+              child: ListView(
+                shrinkWrap: true,
+                children: [
+                  for (final share in expense.shares)
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      dense: true,
+                      leading: PersonAvatar(
+                        userId: share.userId,
+                        initials: detail?.byId[share.userId]?.initials ?? '?',
+                      ),
+                      title: Text(detail?.nameOf(share.userId) ?? '...'),
+                      trailing: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            share.amount
+                                .format(currencyCode: expense.currencyCode),
+                            style: const TextStyle(fontWeight: FontWeight.w600),
+                          ),
+                          ?(converted
+                              ? Text(
+                                  share.inUsdt.format(),
+                                  style: theme.textTheme.bodySmall?.copyWith(
+                                    color: theme.colorScheme.outline,
+                                  ),
+                                )
+                              : null),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton.icon(
+                  onPressed: () {
+                    Navigator.of(sheetContext).pop();
+                    onEdit(expense);
+                  },
+                  icon: const Icon(Icons.edit_outlined),
+                  label: const Text('Editar'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+/// Every payment already made in this group, newest first.
+///
+/// The other three tabs are all DERIVED — balances and settlement are
+/// recomputed from scratch on every read, and they only ever say where things
+/// stand now. This is the other half: the record of what was actually handed
+/// over to get there. Without it, a balance that dropped by 50 USDT is a
+/// number nobody can account for.
+class _HistoryTab extends StatelessWidget {
+  const _HistoryTab({
+    required this.controller,
+    required this.detail,
+    required this.me,
+    required this.groupCreatedBy,
+    required this.onDelete,
+  });
+
+  final GroupController controller;
+  final GroupDetail? detail;
+  final String? me;
+  final String groupCreatedBy;
+  final void Function(Payment payment) onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return LoadStateView<List<Payment>>(
+      loader: controller.payments,
+      builder: (context, payments) {
+        if (payments.isEmpty) {
+          return const EmptyView(
+            icon: Icons.history,
+            title: 'Todavía no se pagó nada',
+            subtitle: 'Cuando alguien salde una deuda, va a quedar acá.',
+          );
+        }
+
+        return RefreshIndicator(
+          onRefresh: controller.refreshLedger,
+          child: ListView.separated(
+            padding: const EdgeInsets.only(bottom: 96),
+            itemCount: payments.length,
+            separatorBuilder: (_, _) => const Divider(height: 1),
+            itemBuilder: (context, index) {
+              final payment = payments[index];
+              final converted = payment.currencyCode != settlementCurrency;
+
+              // Somebody can record a payment they did not make — the host
+              // can — so it is worth saying who wrote it down when the two
+              // are different people.
+              final recorder = payment.createdBy == payment.fromUserId
+                  ? null
+                  : detail?.nameOf(payment.createdBy);
+
+              return ListTile(
+                leading: PersonAvatar(
+                  userId: payment.fromUserId,
+                  initials: detail?.byId[payment.fromUserId]?.initials ?? '?',
+                ),
+                title: Text(
+                  '${detail?.nameOf(payment.fromUserId) ?? '...'}  →  '
+                  '${detail?.nameOf(payment.toUserId) ?? '...'}',
+                ),
+                subtitle: Text(
+                  [
+                    _formatDate(payment.paidAt),
+                    if (converted)
+                      'pagado en '
+                          '${payment.amount.format(currencyCode: payment.currencyCode)}',
+                    if (recorder != null) 'registró $recorder',
+                  ].join(' · '),
+                ),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      payment.inUsdt.format(),
+                      style: theme.textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w600,
+                        color: theme.colorScheme.primary,
+                      ),
+                    ),
+                    // Drawn only for people the server would let through.
+                    ?(payment.canBeDeletedBy(me, groupCreatedBy: groupCreatedBy)
+                        ? IconButton(
+                            tooltip: 'Eliminar el pago',
+                            icon: const Icon(Icons.delete_outline),
+                            onPressed: () => onDelete(payment),
+                          )
+                        : null),
+                  ],
+                ),
+              );
+            },
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// "7 de septiembre", or "7 de septiembre de 2025" when it was another year.
+String _formatDate(DateTime when) {
+  const months = [
+    'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
+    'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre',
+  ];
+
+  final local = when.toLocal();
+  final month = months[local.month - 1];
+  final sameYear = local.year == DateTime.now().year;
+
+  return sameYear
+      ? '${local.day} de $month'
+      : '${local.day} de $month de ${local.year}';
 }

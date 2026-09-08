@@ -1,8 +1,12 @@
+/// A group of people sharing expenses.
+///
+/// It has NO currency. It used to, and it was a lie: people on one trip pay
+/// for dinner in bolivianos, a hotel in dollars and each other in USDT. The
+/// currency belongs to each expense; the group settles everything in USDT.
 class ExpenseGroup {
   const ExpenseGroup({
     required this.id,
     required this.name,
-    required this.currencyCode,
     required this.createdBy,
     required this.createdAt,
     this.memberCount,
@@ -10,7 +14,6 @@ class ExpenseGroup {
 
   final String id;
   final String name;
-  final String currencyCode;
   final String createdBy;
   final DateTime createdAt;
 
@@ -22,7 +25,6 @@ class ExpenseGroup {
   factory ExpenseGroup.fromJson(Map<String, dynamic> json) => ExpenseGroup(
         id: json['id'] as String,
         name: json['name'] as String,
-        currencyCode: json['currencyCode'] as String,
         createdBy: json['createdBy'] as String,
         createdAt: DateTime.parse(json['createdAt'] as String),
         memberCount: json['memberCount'] as int?,

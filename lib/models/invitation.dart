@@ -10,7 +10,6 @@ class Invitation {
     required this.id,
     required this.groupId,
     required this.groupName,
-    required this.currencyCode,
     required this.invitedByName,
     required this.memberCount,
     required this.createdAt,
@@ -19,7 +18,6 @@ class Invitation {
   final String id;
   final String groupId;
   final String groupName;
-  final String currencyCode;
   final String invitedByName;
   final int memberCount;
   final DateTime createdAt;
@@ -28,7 +26,6 @@ class Invitation {
         id: json['id'] as String,
         groupId: json['groupId'] as String,
         groupName: json['groupName'] as String,
-        currencyCode: json['currencyCode'] as String,
         invitedByName: json['invitedByName'] as String,
         memberCount: json['memberCount'] as int,
         createdAt: DateTime.parse(json['createdAt'] as String),

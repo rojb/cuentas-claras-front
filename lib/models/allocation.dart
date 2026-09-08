@@ -235,3 +235,73 @@ Map<String, Money>? allocate(Split split, Money total) {
     for (final (index, userId) in people.indexed) userId: Money(cents[index]),
   };
 }
+
+/// Converts an amount into the unit the ledger settles in.
+///
+/// A LINE-BY-LINE port of `toSettlementCents` in
+/// `backend/src/domain/currency.ts`, rounding half up in integers so the
+/// preview and the stored expense can never disagree by a cent.
+///
+/// Returns null when the money is worth less than a cent of USDT. Bs 0,01 at
+/// 6,96 is one such amount, and there is no honest thing to show for it:
+/// rounding up invents money and rounding down charges somebody for nothing.
+/// The server refuses it too, with `amount_too_small`.
+Money? toSettlement(Money amount, Rate rate) {
+  if (amount.cents < 0 || !rate.isUsable) return null;
+
+  final scaled = amount.cents * Rate.parMicros;
+  final converted = (2 * scaled + rate.micros) ~/ (2 * rate.micros);
+
+  return converted <= 0 ? null : Money(converted);
+}
+
+/// What each person ends up owing in USDT, for a split priced in something
+/// else.
+///
+/// THE ORDER IS THE WHOLE POINT. The split is resolved first, in the currency
+/// the money was spent in — "Ana pone Bs 40" is what the people agreed to and
+/// it has to add up to the Bs 100 on the receipt. Only then is the TOTAL
+/// converted, once, and those native shares become the weights that divide
+/// it.
+///
+/// Converting each share on its own instead would round each one on its own,
+/// and a handful of separate roundings do not add back up to the converted
+/// total. That is not a rounding nit: it is the invariant the whole ledger
+/// rests on, and the database refuses to commit an expense that breaks it.
+Map<String, Money>? allocateInSettlement(
+  Split split,
+  Money total,
+  Rate rate,
+) {
+  final native = allocate(split, total);
+  if (native == null) return null;
+
+  final totalUsdt = toSettlement(total, rate);
+  if (totalUsdt == null) return null;
+
+  final people = native.keys.toList();
+  final converted = distributeProportionally(
+    totalUsdt.cents,
+    [for (final person in people) native[person]!.cents],
+  );
+  if (converted == null) return null;
+
+  return {
+    for (final (index, person) in people.indexed) person: Money(converted[index]),
+  };
+}
+
+/// The other direction: what a USDT amount comes to in another currency.
+///
+/// FOR FILLING IN A FORM FIELD, AND NOTHING ELSE. The ledger never runs this
+/// — money only ever travels one way through it, into USDT, once, at the rate
+/// frozen on the expense. This exists so that somebody looking at "pagale
+/// 50,00 USDT a Ruben" can be handed "Bs 348,00" to type into a bank app
+/// instead of reaching for a calculator, and then edit it if they hand over
+/// something else.
+///
+/// Rounds half up, like everything else here.
+Money fromSettlement(Money usdt, Rate rate) {
+  final scaled = usdt.cents * rate.micros;
+  return Money((2 * scaled + Rate.parMicros) ~/ (2 * Rate.parMicros));
+}

@@ -44,6 +44,12 @@ const _byCode = <String, String>{
   // surface, so that no path ends up showing the server's English.
   'balance_not_settled': 'Todavía tenés cuentas pendientes en este grupo.',
   'invalid_split': 'Las cuentas no cierran: la división no suma el total.',
+  'invalid_rate': 'Ese tipo de cambio no sirve. Un gasto en USDT va uno a uno.',
+  'cannot_record_payment': 'Este pago lo pueden registrar las dos personas '
+      'entre las que va, o el anfitrión del grupo.',
+  'cannot_delete_payment': 'Este pago lo pueden eliminar las dos personas '
+      'entre las que va, quien lo registró, o el anfitrión del grupo.',
+  'amount_too_small': 'Ese monto es menos de un centavo de USDT.',
   'invalid_body': 'Faltan datos o están mal escritos.',
   'route_not_found': 'Esa dirección no existe en el servidor.',
 

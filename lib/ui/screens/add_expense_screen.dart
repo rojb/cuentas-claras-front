@@ -4,14 +4,22 @@ import '../../app/dependencies.dart';
 import '../../models/expense.dart';
 import '../../models/money.dart';
 import '../../models/user.dart';
+import '../widgets/currency_rate_fields.dart';
 import '../widgets/failure_view.dart';
 import 'split_editor.dart';
 
-/// Adding an expense: what it was, how much, who paid, and how to divide it.
+/// Adding an expense: what it was, how much, in what money, who paid, and how
+/// to divide it.
 ///
 /// The division is the whole point of this app, so it gets its own editor and
-/// its own file. This screen owns the three easy fields and hands the hard
-/// part to [SplitEditor].
+/// its own file. This screen owns the easy fields and hands the hard part to
+/// [SplitEditor].
+///
+/// EVERYTHING ON THIS FORM IS IN THE EXPENSE'S OWN CURRENCY — the total and
+/// every number inside the split. That is what the people at the table
+/// actually agreed to ("Ana pone Bs 40"), and it is what has to add up to
+/// what the receipt says. The conversion to USDT happens once, on the server,
+/// on the total; this screen only shows what it will come to.
 ///
 /// Editing reuses this same screen rather than getting one of its own. An
 /// edit form that drifts from the create form is how you end up able to
@@ -20,17 +28,30 @@ class AddExpenseScreen extends StatefulWidget {
   const AddExpenseScreen({
     super.key,
     required this.groupId,
-    required this.currencyCode,
     required this.members,
     this.editing,
+    this.recentCurrency,
+    this.recentRates = const {},
   });
 
   final String groupId;
-  final String currencyCode;
   final List<GroupMember> members;
 
   /// The expense being corrected, or null when adding a new one.
   final Expense? editing;
+
+  /// What the group has been spending in lately, so the common case is one
+  /// tap shorter.
+  final String? recentCurrency;
+
+  /// The last rate this group actually used for each currency.
+  ///
+  /// Offered as a starting point, never as the answer. Nothing is invented
+  /// here: an empty map means an empty field, because a made-up rate is worse
+  /// than no rate. In Bolivia especially, USDT does not trade anywhere near
+  /// the official number, and the only rate worth recording is the one these
+  /// people actually agreed to.
+  final Map<String, Rate> recentRates;
 
   @override
   State<AddExpenseScreen> createState() => _AddExpenseScreenState();
@@ -40,7 +61,9 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
   final _formKey = GlobalKey<FormState>();
   late final TextEditingController _description;
   late final TextEditingController _total;
+  late final TextEditingController _rate;
 
+  late String _currency;
   late String _paidBy;
   final _splitKey = GlobalKey<SplitEditorState>();
 
@@ -57,6 +80,18 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
     _description = TextEditingController(text: editing?.description ?? '');
     _total = TextEditingController(text: editing?.total.asPlainText ?? '');
 
+    // Reopening an expense shows the rate it was FROZEN at, not today's. The
+    // whole point of freezing is that the numbers on an old expense do not
+    // move on their own; showing anything else here would quietly re-rate it
+    // the next time somebody fixed a typo in the description.
+    _currency = editing?.currencyCode ??
+        widget.recentCurrency ??
+        (currencies.containsKey('BOB') ? 'BOB' : settlementCurrency);
+
+    _rate = TextEditingController(
+      text: editing?.rate.asPlainText ?? _suggestedRateFor(_currency),
+    );
+
     // An expense whose payer is somehow no longer in the group would leave the
     // dropdown with a value it cannot show, which throws on build.
     final payer = editing?.paidBy;
@@ -69,16 +104,37 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
   void dispose() {
     _description.dispose();
     _total.dispose();
+    _rate.dispose();
     super.dispose();
   }
 
+  String _suggestedRateFor(String currencyCode) =>
+      widget.recentRates[currencyCode]?.asPlainText ?? '';
+
   Money? get _parsedTotal => Money.tryParse(_total.text);
+
+  Rate? get _parsedRate =>
+      _currency == settlementCurrency ? Rate.par : Rate.tryParse(_rate.text);
+
+  void _changeCurrency(String value) {
+    if (value == _currency) return;
+
+    setState(() {
+      _currency = value;
+      // Whatever rate was in the field belonged to the old currency. Keeping
+      // it would silently price bolivianos at the dollar's rate.
+      _rate.text = _suggestedRateFor(value);
+    });
+  }
 
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
 
     final split = _splitKey.currentState?.buildSplit();
     if (split == null) return;
+
+    final rate = _parsedRate;
+    if (rate == null) return;
 
     setState(() => _busy = true);
 
@@ -91,6 +147,8 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
           groupId: widget.groupId,
           description: _description.text.trim(),
           total: _parsedTotal!,
+          currencyCode: _currency,
+          rate: rate,
           split: split,
           paidBy: _paidBy,
         );
@@ -100,6 +158,8 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
           expenseId: editing.id,
           description: _description.text.trim(),
           total: _parsedTotal!,
+          currencyCode: _currency,
+          rate: rate,
           split: split,
           paidBy: _paidBy,
         );
@@ -151,7 +211,8 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
               onChanged: (_) => setState(() {}),
               decoration: InputDecoration(
                 labelText: 'Total',
-                prefixText: '${widget.currencyCode} ',
+                prefixText:
+                    '${currencies[_currency]?.symbol ?? _currency} ',
               ),
               validator: (_) {
                 final total = _parsedTotal;
@@ -159,6 +220,14 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
                 if (total.cents <= 0) return 'Tiene que ser mayor a cero';
                 return null;
               },
+            ),
+            const SizedBox(height: 16),
+            CurrencyRateFields(
+              currencyCode: _currency,
+              rate: _rate,
+              amount: _parsedTotal,
+              onCurrencyChanged: _changeCurrency,
+              onRateChanged: () => setState(() {}),
             ),
             const SizedBox(height: 16),
             DropdownButtonFormField<String>(
@@ -178,8 +247,9 @@ class _AddExpenseScreenState extends State<AddExpenseScreen> {
             SplitEditor(
               key: _splitKey,
               members: widget.members,
-              currencyCode: widget.currencyCode,
+              currencyCode: _currency,
               total: _parsedTotal ?? Money.zero,
+              rate: _parsedRate,
               initial: widget.editing?.split,
             ),
           ],

@@ -33,13 +33,11 @@ class GroupsRepository {
         .toList();
   }
 
-  Future<ExpenseGroup> create({
-    required String name,
-    required String currencyCode,
-  }) async {
+  /// Creates a group. No currency: its expenses each carry their own, and
+  /// everything settles in USDT.
+  Future<ExpenseGroup> create({required String name}) async {
     final response = await _api.post('/groups', body: {
       'name': name,
-      'currencyCode': currencyCode,
     }) as Map<String, dynamic>;
 
     return ExpenseGroup.fromJson(response['group'] as Map<String, dynamic>);

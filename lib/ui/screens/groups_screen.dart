@@ -173,7 +173,7 @@ class _GroupsScreenState extends State<GroupsScreen> {
 
                   return ListTile(
                     leading: CircleAvatar(
-                      child: Text(group.currencyCode.substring(0, 1)),
+                      child: Text(_initialOf(group.name)),
                     ),
                     title: Text(group.name),
                     subtitle: Text(_subtitleFor(group)),
@@ -260,16 +260,26 @@ class _InvitationCard extends StatelessWidget {
   }
 }
 
-/// "3 integrantes · Boliviano", or "1 integrante" when there is only one.
+/// "3 integrantes · salda en USDT", or "1 integrante" when there is only one.
 ///
 /// Spanish agrees in number, so a bare '$count integrantes' reads as broken
 /// the moment somebody creates a group and has not added anybody yet.
+///
+/// The currency named here is the one the group SETTLES in, not one it was
+/// created with. Its expenses can be in any of the three; this is the unit
+/// they all end up in.
 String _subtitleFor(ExpenseGroup group) {
   final count = group.memberCount ?? 0;
   final people = count == 1 ? '1 integrante' : '$count integrantes';
-  final currency = currencies[group.currencyCode]?.name ?? group.currencyCode;
 
-  return '$people · $currency';
+  return '$people · salda en $settlementCurrency';
+}
+
+/// First letter of the group's name, for the avatar. Falls back to a dot
+/// rather than throwing on a name that is somehow empty.
+String _initialOf(String name) {
+  final trimmed = name.trim();
+  return trimmed.isEmpty ? '·' : trimmed.substring(0, 1).toUpperCase();
 }
 
 class _NewGroupSheet extends StatefulWidget {
@@ -283,7 +293,6 @@ class _NewGroupSheetState extends State<_NewGroupSheet> {
   final _formKey = GlobalKey<FormState>();
   final _name = TextEditingController();
 
-  String _currency = 'BOB';
   bool _busy = false;
 
   @override
@@ -300,7 +309,6 @@ class _NewGroupSheetState extends State<_NewGroupSheet> {
     try {
       final group = await Dependencies.of(context).groups.create(
             name: _name.text.trim(),
-            currencyCode: _currency,
           );
       if (mounted) Navigator.of(context).pop(group);
     } on Object catch (error) {
@@ -344,20 +352,24 @@ class _NewGroupSheetState extends State<_NewGroupSheet> {
                   : null,
             ),
             const SizedBox(height: 16),
-            DropdownButtonFormField<String>(
-              initialValue: _currency,
-              decoration: const InputDecoration(labelText: 'Moneda'),
-              // Driven by the same map the formatter uses, so a currency can
-              // never be selectable and unformattable at the same time.
-              items: [
-                for (final entry in currencies.entries)
-                  DropdownMenuItem(
-                    value: entry.key,
-                    child: Text('${entry.value.name} (${entry.value.symbol})'),
+            // No currency picker. A group does not have one: each expense
+            // carries the money it was actually paid in, and everything is
+            // reconciled in USDT.
+            Row(
+              children: [
+                Icon(Icons.info_outline,
+                    size: 18, color: Theme.of(context).colorScheme.outline),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Los gastos pueden ser en bolivianos, dólares o '
+                    '$settlementCurrency. Todo se salda en $settlementCurrency.',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Theme.of(context).colorScheme.outline,
+                        ),
                   ),
+                ),
               ],
-              onChanged: (value) =>
-                  setState(() => _currency = value ?? _currency),
             ),
             const SizedBox(height: 24),
             FilledButton(
